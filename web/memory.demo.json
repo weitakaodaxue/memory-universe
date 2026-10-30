@@ -1,0 +1,809 @@
+{
+ "generatedAt": 1756000000000,
+ "source": "demo",
+ "sessions": [
+  {
+   "id": "demo-01",
+   "project": "~/demo/cookbook",
+   "title": "面包为什么发不起来",
+   "createdAt": 1756029220000,
+   "lastAt": 1756030300000,
+   "msgCount": 10,
+   "toolCount": 5,
+   "messages": [
+    {
+     "role": "user",
+     "text": "第一次烤欧包，面团发了两小时还是没怎么膨胀，是哪里出了问题？",
+     "at": 1756029220000,
+     "seq": 1
+    },
+    {
+     "role": "assistant",
+     "text": "先看酵母是不是过期了，再确认水温没超过 38°C。室温低于 20°C 时两小时本来就不够，可以放进烤箱开灯发酵，或者把时间延长到 4 小时以上。",
+     "at": 1756029400000,
+     "seq": 2
+    },
+    {
+     "role": "user",
+     "text": "酵母是上个月开封的干酵母，一直放在橱柜里。",
+     "at": 1756029445000,
+     "seq": 3
+    },
+    {
+     "role": "assistant",
+     "text": "开封后的干酵母受潮会迅速失活。取 5 克用 30°C 的糖水泡 10 分钟，表面起一层泡沫说明还活着，没动静就换新的。",
+     "at": 1756029625000,
+     "seq": 4
+    },
+    {
+     "role": "user",
+     "text": "泡了确实没泡沫，换新酵母之后配方要调吗？",
+     "at": 1756029670000,
+     "seq": 5
+    },
+    {
+     "role": "assistant",
+     "text": "不用调，酵母量保持面粉重量的 1% 左右就行。换成新酵母后发酵会快很多，每 40 分钟看一次，体积到两倍就折叠排气。",
+     "at": 1756029850000,
+     "seq": 6
+    },
+    {
+     "role": "user",
+     "text": "折叠几次比较合适？",
+     "at": 1756029895000,
+     "seq": 7
+    },
+    {
+     "role": "assistant",
+     "text": "基础发酵期间折 3 到 4 次，每次间隔 40 分钟。手上沾点水防粘，从四周拉起往中间压，别把气泡全按掉。",
+     "at": 1756030075000,
+     "seq": 8
+    },
+    {
+     "role": "user",
+     "text": "烤出来表皮很硬，里面还行，怎么让皮薄一点？",
+     "at": 1756030120000,
+     "seq": 9
+    },
+    {
+     "role": "assistant",
+     "text": "硬皮主要是烤箱内湿度不够加上烤得太久。前 15 分钟放一盘热水制造蒸汽，后 15 分钟开风门上色，总时长控制在 35 到 40 分钟。",
+     "at": 1756030300000,
+     "seq": 10
+    }
+   ]
+  },
+  {
+   "id": "demo-02",
+   "project": "~/demo/notes/python",
+   "title": "列表推导式和生成器怎么选",
+   "createdAt": 1756566640137,
+   "lastAt": 1756568051813,
+   "msgCount": 10,
+   "toolCount": 5,
+   "messages": [
+    {
+     "role": "user",
+     "text": "列表推导式和生成器表达式什么时候该用哪个？",
+     "at": 1756566640137,
+     "seq": 1
+    },
+    {
+     "role": "assistant",
+     "text": "结果要多次遍历、要 len()、要索引，就用列表推导式；只遍历一次或者数据量可能很大，就用生成器表达式，内存占用是常数级。",
+     "at": 1756566880137,
+     "seq": 2
+    },
+    {
+     "role": "user",
+     "text": "那 map/filter 跟推导式比呢？",
+     "at": 1756566933056,
+     "seq": 3
+    },
+    {
+     "role": "assistant",
+     "text": "逻辑简单的时候 map/filter 略快一点，但一旦要加条件或者多个变量，推导式可读性好得多。团队里统一风格比抠这点性能重要。",
+     "at": 1756567173056,
+     "seq": 4
+    },
+    {
+     "role": "user",
+     "text": "嵌套推导式是不是应该避免？",
+     "at": 1756567225975,
+     "seq": 5
+    },
+    {
+     "role": "assistant",
+     "text": "两层以上就拆开写成普通循环。嵌套推导式的阅读顺序是从内到外，绝大多数人第一次读都会读反。",
+     "at": 1756567465975,
+     "seq": 6
+    },
+    {
+     "role": "user",
+     "text": "生成器用完之后还能再用吗？",
+     "at": 1756567518894,
+     "seq": 7
+    },
+    {
+     "role": "assistant",
+     "text": "不能，生成器是一次性的。需要重复使用就写成函数返回新的生成器，或者干脆用列表。",
+     "at": 1756567758894,
+     "seq": 8
+    },
+    {
+     "role": "user",
+     "text": "怎么判断一个对象是不是可迭代？",
+     "at": 1756567811813,
+     "seq": 9
+    },
+    {
+     "role": "assistant",
+     "text": "用 isinstance(x, collections.abc.Iterable) 判断。注意字符串和字典也是可迭代的，别误判。",
+     "at": 1756568051813,
+     "seq": 10
+    }
+   ]
+  },
+  {
+   "id": "demo-03",
+   "project": "~/demo/web/layout-lab",
+   "title": "flex 还是 grid",
+   "createdAt": 1757190460274,
+   "lastAt": 1757192203626,
+   "msgCount": 10,
+   "toolCount": 5,
+   "messages": [
+    {
+     "role": "user",
+     "text": "flex 和 grid 到底怎么选？",
+     "at": 1757190460274,
+     "seq": 1
+    },
+    {
+     "role": "assistant",
+     "text": "一维排布用 flex，二维网格用 grid。实际项目里常见的是外层 grid 划区域，区域内部的排列用 flex。",
+     "at": 1757190760274,
+     "seq": 2
+    },
+    {
+     "role": "user",
+     "text": "我只想让卡片等高，用 flex 还是 grid？",
+     "at": 1757190821112,
+     "seq": 3
+    },
+    {
+     "role": "assistant",
+     "text": "两者都行。grid 加 align-items: stretch 更省事，flex 需要给子项设 flex: 1 1 auto，再处理内容撑开的情况。",
+     "at": 1757191121112,
+     "seq": 4
+    },
+    {
+     "role": "user",
+     "text": "响应式断点一般设几个？",
+     "at": 1757191181950,
+     "seq": 5
+    },
+    {
+     "role": "assistant",
+     "text": "移动优先的话 640 和 1024 两个断点能覆盖大多数场景，再多维护成本会涨得很快。",
+     "at": 1757191481950,
+     "seq": 6
+    },
+    {
+     "role": "user",
+     "text": "容器查询现在能直接用吗？",
+     "at": 1757191542788,
+     "seq": 7
+    },
+    {
+     "role": "assistant",
+     "text": "@container 在主流浏览器都支持了，比媒体查询更适合组件级适配。需要兼容很老的浏览器时再退回媒体查询。",
+     "at": 1757191842788,
+     "seq": 8
+    },
+    {
+     "role": "user",
+     "text": "怎么让中间那一栏自适应宽度？",
+     "at": 1757191903626,
+     "seq": 9
+    },
+    {
+     "role": "assistant",
+     "text": "外层用 grid-template-columns: 240px minmax(0, 1fr) 240px。minmax(0, 1fr) 里的 0 很关键，否则长单词会把列撑破。",
+     "at": 1757192203626,
+     "seq": 10
+    }
+   ]
+  },
+  {
+   "id": "demo-04",
+   "project": "~/demo/notes/network",
+   "title": "TCP 为什么是三次握手",
+   "createdAt": 1757857480411,
+   "lastAt": 1757859126682,
+   "msgCount": 8,
+   "toolCount": 4,
+   "messages": [
+    {
+     "role": "user",
+     "text": "TCP 三次握手为什么不是两次？",
+     "at": 1757857480411,
+     "seq": 1
+    },
+    {
+     "role": "assistant",
+     "text": "两次握手无法确认客户端的接收能力和服务端的发送能力，历史重复的连接请求还会让服务端建立无效连接。第三次 ACK 让双方都确认了彼此的收发能力。",
+     "at": 1757857840411,
+     "seq": 2
+    },
+    {
+     "role": "user",
+     "text": "那四次挥手为什么要多一次？",
+     "at": 1757857909168,
+     "seq": 3
+    },
+    {
+     "role": "assistant",
+     "text": "因为 TCP 是全双工的。一方发完数据只能先说自己这一半关了，另一方的数据可能还没发完，所以中间多了一个半关闭状态。",
+     "at": 1757858269168,
+     "seq": 4
+    },
+    {
+     "role": "user",
+     "text": "TIME_WAIT 为什么必须等 2MSL？",
+     "at": 1757858337925,
+     "seq": 5
+    },
+    {
+     "role": "assistant",
+     "text": "一是保证最后一个 ACK 丢了还能重传，二是让这条连接上的旧报文在网络里彻底消失，不会串到下一个用同样端口的新连接里。",
+     "at": 1757858697925,
+     "seq": 6
+    },
+    {
+     "role": "user",
+     "text": "服务端出现大量 TIME_WAIT 有什么影响？",
+     "at": 1757858766682,
+     "seq": 7
+    },
+    {
+     "role": "assistant",
+     "text": "一般只有主动关闭的一方才有 TIME_WAIT。服务端出现多半是短连接太频繁，可以开 tcp_tw_reuse 缓解，但别开 tcp_tw_recycle。",
+     "at": 1757859126682,
+     "seq": 8
+    }
+   ]
+  },
+  {
+   "id": "demo-05",
+   "project": "~/demo/writing",
+   "title": "写一首关于秋天的短诗",
+   "createdAt": 1758477700548,
+   "lastAt": 1758479113900,
+   "msgCount": 6,
+   "toolCount": 3,
+   "messages": [
+    {
+     "role": "user",
+     "text": "写一首关于秋天的短诗，八行以内。",
+     "at": 1758477700548,
+     "seq": 1
+    },
+    {
+     "role": "assistant",
+     "text": "风把最后一片叶子\n放在长椅上\n像谁忘了带走的一页信\n\n天色矮下来\n路灯先亮了\n影子比我更早回家",
+     "at": 1758478120548,
+     "seq": 2
+    },
+    {
+     "role": "user",
+     "text": "太静了，能不能多一点声音？",
+     "at": 1758478197224,
+     "seq": 3
+    },
+    {
+     "role": "assistant",
+     "text": "风翻动铁皮的屋檐\n雨数着台阶\n一、二、三\n数到第四级就停了\n\n有人关窗\n有人在锅里煮桂花",
+     "at": 1758478617224,
+     "seq": 4
+    },
+    {
+     "role": "user",
+     "text": "第二首好，但最后一句能再收一下吗？",
+     "at": 1758478693900,
+     "seq": 5
+    },
+    {
+     "role": "assistant",
+     "text": "改成「有人在锅里煮桂花，香气比人先到」。把嗅觉提前，收尾更有余味。",
+     "at": 1758479113900,
+     "seq": 6
+    }
+   ]
+  },
+  {
+   "id": "demo-06",
+   "project": "~/demo/scripts/logparse",
+   "title": "从日志里抠 IP 和状态码",
+   "createdAt": 1759058320685,
+   "lastAt": 1759059294470,
+   "msgCount": 8,
+   "toolCount": 4,
+   "messages": [
+    {
+     "role": "user",
+     "text": "日志一行长这样：2025-10-11 08:32:17 INFO 10.2.3.44 GET /api/v1/users 200 32ms，怎么用正则取 IP 和状态码？",
+     "at": 1759058320685,
+     "seq": 1
+    },
+    {
+     "role": "assistant",
+     "text": "用命名分组最清楚：^(?P<time>\\S+ \\S+)\\s+\\S+\\s+(?P<ip>\\d{1,3}(?:\\.\\d{1,3}){3})\\s+\\S+\\s+\\S+\\s+(?P<status>\\d{3})\\b。状态码末尾加 \\b，避免把毫秒里的数字吃进去。",
+     "at": 1759058500685,
+     "seq": 2
+    },
+    {
+     "role": "user",
+     "text": "为什么 IP 那段要写成 (?:\\.\\d{1,3}){3}？",
+     "at": 1759058585280,
+     "seq": 3
+    },
+    {
+     "role": "assistant",
+     "text": "非捕获组表示「点和数字」再重复三次，正好凑够四段。用捕获组会让编号乱掉，取值容易取错。",
+     "at": 1759058765280,
+     "seq": 4
+    },
+    {
+     "role": "user",
+     "text": "如果日志里的时间格式不固定呢？",
+     "at": 1759058849875,
+     "seq": 5
+    },
+    {
+     "role": "assistant",
+     "text": "别在一行里全用正则硬吃。先按空白切分，从固定位置取字段，正则只负责校验 IP 和状态码，稳得多。",
+     "at": 1759059029875,
+     "seq": 6
+    },
+    {
+     "role": "user",
+     "text": "Python 里 re.match 和 re.search 总混淆。",
+     "at": 1759059114470,
+     "seq": 7
+    },
+    {
+     "role": "assistant",
+     "text": "match 只从开头试，search 会扫全串。日志解析用 search 更安全，除非你确定那一行开头就是时间戳。",
+     "at": 1759059294470,
+     "seq": 8
+    }
+   ]
+  },
+  {
+   "id": "demo-07",
+   "project": "~/demo/db/analysis",
+   "title": "这条分组查询太慢",
+   "createdAt": 1759768540822,
+   "lastAt": 1759769778364,
+   "msgCount": 8,
+   "toolCount": 4,
+   "messages": [
+    {
+     "role": "user",
+     "text": "这条查询在百万级表上要 4 秒：SELECT user_id, COUNT(*) FROM events WHERE created_at >= '2025-10-01' GROUP BY user_id",
+     "at": 1759768540822,
+     "seq": 1
+    },
+    {
+     "role": "assistant",
+     "text": "先看有没有 (created_at, user_id) 的联合索引，顺序不能反。有的话应该是覆盖索引扫，不该回表。",
+     "at": 1759768780822,
+     "seq": 2
+    },
+    {
+     "role": "user",
+     "text": "现在只有单列 created_at 索引。",
+     "at": 1759768873336,
+     "seq": 3
+    },
+    {
+     "role": "assistant",
+     "text": "单列也能用，但要回表取 user_id。加一个 (created_at, user_id) 联合索引，扫描变成 index-only，通常能快一个数量级。",
+     "at": 1759769113336,
+     "seq": 4
+    },
+    {
+     "role": "user",
+     "text": "EXPLAIN 里 type=range，Extra 是 Using index condition，正常吗？",
+     "at": 1759769205850,
+     "seq": 5
+    },
+    {
+     "role": "assistant",
+     "text": "说明还在回表，改成 Using index 才是覆盖索引。另外别在 where 里对 created_at 套函数，那样索引直接失效。",
+     "at": 1759769445850,
+     "seq": 6
+    },
+    {
+     "role": "user",
+     "text": "分组结果几十万行，接口顶不住怎么办？",
+     "at": 1759769538364,
+     "seq": 7
+    },
+    {
+     "role": "assistant",
+     "text": "考虑预聚合：按天写一张汇总表，查询时只扫汇总。实时性要求不高的话这是最省事的方案。",
+     "at": 1759769778364,
+     "seq": 8
+    }
+   ]
+  },
+  {
+   "id": "demo-08",
+   "project": "~/demo/notes/rust",
+   "title": "所有权到底在防什么",
+   "createdAt": 1760561560959,
+   "lastAt": 1760563062258,
+   "msgCount": 8,
+   "toolCount": 4,
+   "messages": [
+    {
+     "role": "user",
+     "text": "所有权和借用检查器到底在防什么？",
+     "at": 1760561560959,
+     "seq": 1
+    },
+    {
+     "role": "assistant",
+     "text": "防数据竞争和悬垂引用。编译器保证同一时刻要么一个可变借用，要么任意多个不可变借用，这样不需要 GC 也不会出现并发写。",
+     "at": 1760561860959,
+     "seq": 2
+    },
+    {
+     "role": "user",
+     "text": "为什么 String 能移动，而 i32 是复制？",
+     "at": 1760561961392,
+     "seq": 3
+    },
+    {
+     "role": "assistant",
+     "text": "String 内部是堆指针，复制会导致双重释放；i32 是纯栈上的定长值，Copy trait 让它赋值时直接按位复制。",
+     "at": 1760562261392,
+     "seq": 4
+    },
+    {
+     "role": "user",
+     "text": "生命周期标注是不是只在返回引用时才需要？",
+     "at": 1760562361825,
+     "seq": 5
+    },
+    {
+     "role": "assistant",
+     "text": "编译器能推断的地方都不用写。写 fn f<'a>(x: &'a str) -> &'a str 这种标注，本质上是在告诉调用方返回值和入参同寿命。",
+     "at": 1760562661825,
+     "seq": 6
+    },
+    {
+     "role": "user",
+     "text": "报错 value does not live long enough，怎么排查？",
+     "at": 1760562762258,
+     "seq": 7
+    },
+    {
+     "role": "assistant",
+     "text": "顺着报错找到被借用的那个值，看它是不是活得太短：多半是返回了本地变量的引用，或者闭包捕获了短生命周期的变量。",
+     "at": 1760563062258,
+     "seq": 8
+    }
+   ]
+  },
+  {
+   "id": "demo-09",
+   "project": "~/demo/web/pomodoro",
+   "title": "做个番茄钟页面",
+   "createdAt": 1761314981096,
+   "lastAt": 1761317214504,
+   "msgCount": 10,
+   "toolCount": 5,
+   "messages": [
+    {
+     "role": "user",
+     "text": "帮我做一个番茄钟页面，25 分钟工作 5 分钟休息，单个 HTML 文件。",
+     "at": 1761314981096,
+     "seq": 1
+    },
+    {
+     "role": "assistant",
+     "text": "用 setInterval 每秒刷新显示，状态机三态：idle / work / break。剩余时间用截止时间戳减 Date.now()，避免定时器被限流后计时漂移。",
+     "at": 1761315341096,
+     "seq": 2
+    },
+    {
+     "role": "user",
+     "text": "后台标签页时间真的会漂？",
+     "at": 1761315449448,
+     "seq": 3
+    },
+    {
+     "role": "assistant",
+     "text": "会。隐藏的标签页定时器最小间隔会被拉长到 1 秒甚至更多，所以要用截止时间算，而不是每秒减一。",
+     "at": 1761315809448,
+     "seq": 4
+    },
+    {
+     "role": "user",
+     "text": "到点了怎么提醒？",
+     "at": 1761315917800,
+     "seq": 5
+    },
+    {
+     "role": "assistant",
+     "text": "用 AudioContext 生成一个短促的提示音，比外链音频稳。再让 document.title 闪一下，切到别的标签页也能注意到。",
+     "at": 1761316277800,
+     "seq": 6
+    },
+    {
+     "role": "user",
+     "text": "想让计时环有个进度动画。",
+     "at": 1761316386152,
+     "seq": 7
+    },
+    {
+     "role": "assistant",
+     "text": "用 SVG circle 的 stroke-dasharray 和 stroke-dashoffset，每帧按剩余比例设 offset，再加个 transition 就顺了。",
+     "at": 1761316746152,
+     "seq": 8
+    },
+    {
+     "role": "user",
+     "text": "多轮之后想记录今天完成了几次。",
+     "at": 1761316854504,
+     "seq": 9
+    },
+    {
+     "role": "assistant",
+     "text": "次数存 localStorage，key 用日期做后缀，读的时候对比今天的日期，换天就清零，不用后端。",
+     "at": 1761317214504,
+     "seq": 10
+    }
+   ]
+  },
+  {
+   "id": "demo-10",
+   "project": "~/demo/repo",
+   "title": "提交错了怎么撤",
+   "createdAt": 1762111601233,
+   "lastAt": 1762114166317,
+   "msgCount": 10,
+   "toolCount": 5,
+   "messages": [
+    {
+     "role": "user",
+     "text": "我把一个不该提交的 config 推到远端了，还能撤吗？",
+     "at": 1762111601233,
+     "seq": 1
+    },
+    {
+     "role": "assistant",
+     "text": "能，但历史已经被别人拉到就撤不干净。本地没推的话用 git reset --soft HEAD~1 改完再提；已经推送就用 git revert 生成一个反向提交，别去 force push 公共分支。",
+     "at": 1762112021233,
+     "seq": 2
+    },
+    {
+     "role": "user",
+     "text": "reset --soft 和 --hard 区别在哪？",
+     "at": 1762112137504,
+     "seq": 3
+    },
+    {
+     "role": "assistant",
+     "text": "--soft 只动提交记录，改动全留在暂存区；--mixed 退到工作区；--hard 连工作区一起删，删了基本找不回来。",
+     "at": 1762112557504,
+     "seq": 4
+    },
+    {
+     "role": "user",
+     "text": "那 git revert 之后文件还在吗？",
+     "at": 1762112673775,
+     "seq": 5
+    },
+    {
+     "role": "assistant",
+     "text": "在，revert 是新增一次提交把之前的改动反向应用，历史完整保留，适合已经共享的分支。",
+     "at": 1762113093775,
+     "seq": 6
+    },
+    {
+     "role": "user",
+     "text": "怎么防止下次再提交错文件？",
+     "at": 1762113210046,
+     "seq": 7
+    },
+    {
+     "role": "assistant",
+     "text": "把那个路径写进 .gitignore，再用 git update-index --skip-worktree 处理已经跟踪的配置文件，或者改成 .env.example 加本地覆盖。",
+     "at": 1762113630046,
+     "seq": 8
+    },
+    {
+     "role": "user",
+     "text": "已经提交的历史里带着密码怎么办？",
+     "at": 1762113746317,
+     "seq": 9
+    },
+    {
+     "role": "assistant",
+     "text": "先立刻去改密码并让旧密钥失效，再考虑用 filter-repo 重写历史。顺序反了的话，重写历史也没用，泄露已经发生了。",
+     "at": 1762114166317,
+     "seq": 10
+    }
+   ]
+  },
+  {
+   "id": "demo-11",
+   "project": "~/demo/docker",
+   "title": "镜像为什么这么大",
+   "createdAt": 1762865021370,
+   "lastAt": 1762866113940,
+   "msgCount": 8,
+   "toolCount": 4,
+   "messages": [
+    {
+     "role": "user",
+     "text": "一个 Node 服务打出来的镜像 1.2 GB，怎么瘦身？",
+     "at": 1762865021370,
+     "seq": 1
+    },
+    {
+     "role": "assistant",
+     "text": "多半是用了完整基础镜像又把 node_modules 和构建缓存都拷进去了。换成多阶段构建，运行阶段只留 dist 和生产依赖，通常能砍到 150 MB 以内。",
+     "at": 1762865201370,
+     "seq": 2
+    },
+    {
+     "role": "user",
+     "text": "多阶段构建具体怎么写？",
+     "at": 1762865325560,
+     "seq": 3
+    },
+    {
+     "role": "assistant",
+     "text": "builder 阶段装全部依赖跑构建，运行阶段 FROM node:20-slim，只 COPY --from=builder /app/dist 和 package*.json，再 npm ci --omit=dev。",
+     "at": 1762865505560,
+     "seq": 4
+    },
+    {
+     "role": "user",
+     "text": "npm ci --omit=dev 会不会漏掉构建期需要的包？",
+     "at": 1762865629750,
+     "seq": 5
+    },
+    {
+     "role": "assistant",
+     "text": "所以分两个阶段：builder 里装全量，运行阶段才 --omit=dev。别在同一层里又删又装，那样删掉的层依然占体积。",
+     "at": 1762865809750,
+     "seq": 6
+    },
+    {
+     "role": "user",
+     "text": "镜像层数怎么减少？",
+     "at": 1762865933940,
+     "seq": 7
+    },
+    {
+     "role": "assistant",
+     "text": "把相关的 RUN 用 && 串起来，一次 apt-get 里完成 update、install、清理 apt 缓存。",
+     "at": 1762866113940,
+     "seq": 8
+    }
+   ]
+  },
+  {
+   "id": "demo-12",
+   "project": "~/demo/notes/http",
+   "title": "502 和 504 的区别",
+   "createdAt": 1763658041507,
+   "lastAt": 1763659025725,
+   "msgCount": 6,
+   "toolCount": 3,
+   "messages": [
+    {
+     "role": "user",
+     "text": "502 和 504 都是网关错误，实际排查怎么区分？",
+     "at": 1763658041507,
+     "seq": 1
+    },
+    {
+     "role": "assistant",
+     "text": "502 是网关拿到了无效响应，通常是后端进程崩了或端口没监听；504 是网关等后端超时，后端还活着但处理太慢。",
+     "at": 1763658281507,
+     "seq": 2
+    },
+    {
+     "role": "user",
+     "text": "线上偶发 502，日志里没看到后端报错。",
+     "at": 1763658413616,
+     "seq": 3
+    },
+    {
+     "role": "assistant",
+     "text": "先看是不是后端在重启（健康检查失败会被摘掉），再看 nginx 的 upstream 连接数是否打满，还有 listen backlog 溢出。",
+     "at": 1763658653616,
+     "seq": 4
+    },
+    {
+     "role": "user",
+     "text": "504 的话优先查什么？",
+     "at": 1763658785725,
+     "seq": 5
+    },
+    {
+     "role": "assistant",
+     "text": "查慢查询、线程池是否耗尽、以及网关自己的 timeout 配置是不是小于后端正常耗时。",
+     "at": 1763659025725,
+     "seq": 6
+    }
+   ]
+  },
+  {
+   "id": "demo-13",
+   "project": "~/demo/notes/http",
+   "title": "缓存为什么没生效",
+   "createdAt": 1764325061644,
+   "lastAt": 1764326411728,
+   "msgCount": 8,
+   "toolCount": 4,
+   "messages": [
+    {
+     "role": "user",
+     "text": "接口加了 Cache-Control: max-age=60，但浏览器每次都重新请求。",
+     "at": 1764325061644,
+     "seq": 1
+    },
+    {
+     "role": "assistant",
+     "text": "打开 DevTools 看响应头是不是真带上了。常见原因是中间有 CDN 或代理覆盖了缓存头，或者请求带了 Cache-Control: no-cache。",
+     "at": 1764325361644,
+     "seq": 2
+    },
+    {
+     "role": "user",
+     "text": "我看响应头里确实有 max-age=60。",
+     "at": 1764325411672,
+     "seq": 3
+    },
+    {
+     "role": "assistant",
+     "text": "那看请求是不是 POST，POST 默认不缓存。还有 Vary 头缺失导致命中率异常，或者页面本身带 no-store 把整棵树都禁了。",
+     "at": 1764325711672,
+     "seq": 4
+    },
+    {
+     "role": "user",
+     "text": "加 ETag 和 max-age 能同时用吗？",
+     "at": 1764325761700,
+     "seq": 5
+    },
+    {
+     "role": "assistant",
+     "text": "能。max-age 内直接用本地副本，过期后带 If-None-Match 去校验，没变就返回 304，省的是带宽。",
+     "at": 1764326061700,
+     "seq": 6
+    },
+    {
+     "role": "user",
+     "text": "静态资源怎么保证发版后立刻失效？",
+     "at": 1764326111728,
+     "seq": 7
+    },
+    {
+     "role": "assistant",
+     "text": "文件名里带内容哈希，然后把 max-age 设成一年。index.html 本身不缓存，引用关系变了自然就换新文件。",
+     "at": 1764326411728,
+     "seq": 8
+    }
+   ]
+  }
+ ]
+}

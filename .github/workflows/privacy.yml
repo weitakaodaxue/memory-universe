@@ -1,0 +1,24 @@
+name: privacy-check
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Scan for private data
+        run: python tools/privacy_check.py
+      - name: Make sure the real transcript export was not committed
+        run: |
+          if git ls-files --error-unmatch web/memory.json > /dev/null 2>&1; then
+            echo "::error::web/memory.json is tracked. It contains real conversations."
+            exit 1
+          fi
+          echo "web/memory.json is not tracked, good."

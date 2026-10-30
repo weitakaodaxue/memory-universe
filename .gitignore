@@ -1,0 +1,23 @@
+# Your real transcript export. This file contains your conversations.
+# It is ignored on purpose: never `git add -f` it.
+web/memory.json
+
+# Single-file builds (they embed whatever data you built them with).
+memory-universe.html
+*.single.html
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Local tooling scratch (e.g. DSH project memory)
+.dsh-project-memory/

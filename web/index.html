@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>记忆宇宙 · Memory Universe</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="hud">
+  <div class="brand">
+    <h1>记忆<b>宇宙</b></h1>
+    <p>每一颗星，是一次对话；每一粒尘，是一句话。</p>
+    <div class="stat">
+      <span>会话 <i id="s-sessions">–</i></span>
+      <span>记忆 <i id="s-msgs">–</i></span>
+      <span>工具调用 <i id="s-tools">–</i></span>
+    </div>
+  </div>
+
+  <div class="search">
+    <input id="q" type="text" placeholder="搜索记忆内容…">
+  </div>
+
+  <div class="side">
+    <p class="hint">会话星图</p>
+    <div id="list"></div>
+  </div>
+
+  <div class="panel" id="panel">
+    <button class="close" id="close">×</button>
+    <div class="head">
+      <div class="proj" id="p-proj"></div>
+      <h2 id="p-title"></h2>
+      <div class="meta" id="p-meta"></div>
+    </div>
+    <div class="msgs" id="msgs"></div>
+  </div>
+
+  <div class="tips">
+    <b>拖拽</b> 旋转 · <b>滚轮</b> 缩放 · <b>点击星辰</b> 查看对话
+  </div>
+</div>
+
+<script src="vendor/three.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
