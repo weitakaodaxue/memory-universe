@@ -2330,6 +2330,11 @@
       orbit.phi = 0.95;
       frameAll();
 
+      // ?zoom=0.6 之类：把取景再收紧一档。默认取景要把整条旋臂都装进来，
+      // 会话星就只占画面中间一小块；截图/README 里用这个参数才看得清星。
+      const zoomK = parseFloat(QS.get('zoom') || '');
+      if (zoomK > 0.2 && zoomK < 3) orbit.radius = Math.max(40, orbit.radius * zoomK);
+
       const fi = QS.get('focus');
       const focusS = fi !== null ? sessions[+fi] : null;
 
