@@ -158,18 +158,6 @@ memory-universe/
 └── THIRD-PARTY-NOTICES.md
 ```
 
-## 部署到 GitHub Pages
-
-`docs/index.html` 已经是**示例数据**构建出的单文件版，所以不用额外配置：
-
-1. 仓库 **Settings → Pages**
-2. **Source** 选 `Deploy from a branch`
-3. **Branch** 选 `main`，目录选 **`/docs`** → **Save**
-4. 等 1–2 分钟，访问 `https://<用户名>.github.io/memory-universe/`
-
-想换成自己的数据，就在本地 `python export_memory.py` 后再
-`python build_single.py --out docs/index.html`，提交推送即可——
-**但请先确认你愿意把这些对话公开**（见下面「隐私」）。
 
 ## 隐私
 
