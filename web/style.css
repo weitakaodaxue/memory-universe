@@ -67,6 +67,11 @@ canvas:active{cursor:grabbing;}
 .side::-webkit-scrollbar-track{background:transparent;}
 .side .hint{font-size:12px;color:#8ba2ba;margin:0 0 10px 2px;letter-spacing:1.2px;}
 
+/* 虚拟滚动：超过 120 条时行高必须固定，JS 靠 58px 这个步长算可视窗口 */
+.side.virtual .item{height:52px;overflow:hidden;}
+.side.virtual .item .t{-webkit-line-clamp:1;}
+.vlist-inner{will-change:padding-top;}
+
 .item{position:relative;display:flex;gap:9px;align-items:flex-start;padding:8px 10px;
   margin-bottom:6px;border:1px solid var(--line);border-radius:10px;
   background:var(--glass);cursor:pointer;backdrop-filter:blur(8px);
@@ -163,3 +168,49 @@ canvas:active{cursor:grabbing;}
   .msgs{padding:14px 14px 40px;}
   .tips{font-size:10.5px;bottom:14px;letter-spacing:.3px;}
 }
+
+/* ================= 电影质感层 ================= */
+/* 颗粒改在 WebGL 合成着色器里做（见 app.js composite），
+   这里不再用全屏 mix-blend-mode 伪元素——某些合成路径下会把整张画布压黑。 */
+
+/* Linear 风格：顶部 1px 高光 + 内描边，比单色边框更有实体感 */
+.item{border-top:1px solid rgba(255,255,255,.20);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.07),0 6px 18px rgba(0,0,0,.32);}
+.item.on{border-top-color:rgba(140,230,255,.55);}
+.panel{border-top:1px solid rgba(255,255,255,.16);
+  box-shadow:-30px 0 60px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.06);}
+.search input{border-top-color:rgba(255,255,255,.26);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.08);}
+
+/* 等宽读数：数字不抖动，带一点荧光 */
+.brand .stat i,.item .m,.msg .who,.tips,.panel .head .meta,.panel .head .proj{
+  font-family:"JetBrains Mono","Cascadia Mono",Consolas,"SF Mono",Menlo,monospace;
+  font-variant-numeric:tabular-nums;}
+.brand .stat i{text-shadow:0 0 10px rgba(79,216,255,.45);}
+
+/* 音效开关 */
+.mute{pointer-events:auto;padding:7px 10px;border-radius:10px;cursor:pointer;
+  border:1px solid var(--line);border-top-color:rgba(255,255,255,.24);
+  background:rgba(10,18,32,.8);color:#9fe2ff;font-size:12px;letter-spacing:.5px;
+  backdrop-filter:blur(8px);transition:.25s;}
+.mute:hover{color:#eaf7ff;border-color:rgba(79,216,255,.5);}
+.mute.off{color:#6f88a4;}
+
+/* 科幻准星 */
+canvas{cursor:none;}
+#reticle{position:fixed;top:0;left:0;z-index:900;pointer-events:none;
+  width:34px;height:34px;margin:-17px 0 0 -17px;opacity:0;transition:opacity .25s;}
+#reticle.on{opacity:.85;}
+#reticle .ret-ring{position:absolute;inset:0;border:1px solid rgba(127,226,255,.55);
+  border-radius:50%;transition:transform .18s var(--spring),border-color .18s;}
+#reticle .ret-tick{position:absolute;background:rgba(127,226,255,.75);}
+#reticle .ret-tick.t{left:50%;top:-4px;width:1px;height:8px;margin-left:-.5px;}
+#reticle .ret-tick.b{left:50%;bottom:-4px;width:1px;height:8px;margin-left:-.5px;}
+#reticle .ret-tick.l{top:50%;left:-4px;height:1px;width:8px;margin-top:-.5px;}
+#reticle .ret-tick.r{top:50%;right:-4px;height:1px;width:8px;margin-top:-.5px;}
+#reticle.lock .ret-ring{transform:scale(.62);border-color:rgba(255,176,86,.9);
+  box-shadow:0 0 14px rgba(255,176,86,.45);}
+#reticle .ret-coord{position:absolute;left:44px;top:6px;white-space:nowrap;
+  font-family:"JetBrains Mono",Consolas,monospace;font-size:12px;letter-spacing:.6px;
+  color:#a8ecff;text-shadow:0 0 10px rgba(79,216,255,.55),0 1px 2px rgba(0,0,0,.8);opacity:0;transition:opacity .2s;}
+#reticle.lock .ret-coord{opacity:1;}

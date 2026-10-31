@@ -4,8 +4,10 @@
 全部内容都是虚构的，用来让任何人在克隆仓库后不用任何真实对话
 也能立刻看到完整效果。仓库不会、也不应该收录任何真实对话。
 
-    python tools/make_demo_data.py
+    python tools/make_demo_data.py                 # 13 个会话，仓库自带那份
+    python tools/make_demo_data.py --scale 80      # 1040 个会话，用来压测 LOD/虚拟滚动
 """
+import argparse
 import json
 import os
 import time
@@ -199,50 +201,63 @@ TOPICS = [
 BASE_MS = 1_756_000_000_000  # 固定基准时间，保证截图和示例稳定可复现
 
 
-def build():
+def build(scale=1, out=None):
+    out = out or OUT
     sessions = []
-    for idx, (title, project, day_offset, pairs) in enumerate(TOPICS):
-        # Deterministic but varied clock times, so the demo does not look seeded
-        # with 13 identical timestamps.
-        hour = 8 + (idx * 5) % 12
-        minute = (idx * 17 + 7) % 60
-        gap = (3 + idx % 5) * 60_000
-        start = (BASE_MS + day_offset * 86_400_000
-                 + hour * 3_600_000 + minute * 60_000 + (idx * 137) % 60_000)
-        messages = []
-        seq = 1
-        for u, a in pairs:
-            messages.append({"role": "user", "text": u, "at": start, "seq": seq})
-            seq += 1
-            at = start + gap
-            messages.append({"role": "assistant", "text": a, "at": at, "seq": seq})
-            seq += 1
-            start = at + 45_000 + (idx * 7919) % 90_000
-        ats = [m["at"] for m in messages]
-        sessions.append({
-            "id": "demo-%02d" % (idx + 1),
-            "project": project,
-            "title": title,
-            "createdAt": min(ats),
-            "lastAt": max(ats),
-            "msgCount": len(messages),
-            "toolCount": len(pairs),
-            "messages": messages,
-        })
+    for copy in range(max(1, scale)):
+        for idx, (title, project, day_offset, pairs) in enumerate(TOPICS):
+            if copy:
+                # 复制出来的组换个标题和项目路径，时间整体后移，避免看起来重复
+                title = "%s（第 %d 组）" % (title, copy + 1)
+                project = "%s/batch%d" % (project, copy + 1)
+                day_offset = day_offset + copy * 37
+        # Deterministic but varied clock times, so the demo does not look
+            # seeded with identical timestamps.
+            hour = 8 + (idx * 5 + copy * 3) % 12
+            minute = (idx * 17 + 7) % 60
+            gap = (3 + idx % 5) * 60_000
+            start = (BASE_MS + day_offset * 86_400_000
+                     + hour * 3_600_000 + minute * 60_000 + (idx * 137) % 60_000)
+            messages = []
+            seq = 1
+            for u, a in pairs:
+                messages.append({"role": "user", "text": u, "at": start, "seq": seq})
+                seq += 1
+                at = start + gap
+                messages.append({"role": "assistant", "text": a, "at": at, "seq": seq})
+                seq += 1
+                start = at + 45_000 + (idx * 7919) % 90_000
+            ats = [m["at"] for m in messages]
+            sessions.append({
+                "id": "demo-%03d" % (copy * len(TOPICS) + idx + 1),
+                "project": project,
+                "title": title,
+                "createdAt": min(ats),
+                "lastAt": max(ats),
+                "msgCount": len(messages),
+                "toolCount": len(pairs),
+                "messages": messages,
+            })
 
     payload = {
         "generatedAt": BASE_MS,
         "source": "demo",
         "sessions": sessions,
     }
-    os.makedirs(os.path.dirname(OUT), exist_ok=True)
-    with open(OUT, "w", encoding="utf-8", newline="\n") as f:
+    os.makedirs(os.path.dirname(out), exist_ok=True)
+    with open(out, "w", encoding="utf-8", newline="\n") as f:
         json.dump(payload, f, ensure_ascii=False, indent=1)
 
     total = sum(s["msgCount"] for s in sessions)
     print("sessions: %d   messages: %d   -> %s (%.1f KB)"
-          % (len(sessions), total, OUT, os.path.getsize(OUT) / 1024))
+          % (len(sessions), total, out, os.path.getsize(out) / 1024))
+    return sessions
 
 
 if __name__ == "__main__":
-    build()
+    ap = argparse.ArgumentParser(description="生成示例数据")
+    ap.add_argument("--scale", type=int, default=1,
+                    help="把 13 个主题复制成 N 组（默认 1；80 组 = 1040 个会话）")
+    ap.add_argument("--out", default=OUT, help="输出路径（默认 web/memory.demo.json）")
+    a = ap.parse_args()
+    build(a.scale, a.out)

@@ -45,7 +45,7 @@ def main():
     app = read("app.js")
 
     data_path = pick_data(args.data)
-    with open(data_path, "r", encoding="utf-8") as f:
+    with open(data_path, "r", encoding="utf-8-sig") as f:
         data = json.load(f)
 
     if args.light:

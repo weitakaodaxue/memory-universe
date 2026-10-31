@@ -17,6 +17,7 @@
   const GALAXY_R = 236;        // 旋臂外径，取景时也要框进去
   let galaxyPts = null;        // 旋臂点云，取景时按星团规模缩放
   let dustPts = null;          // 弥漫星尘
+  let frameDist = 0;           // 取景后的相机距离，LOD 用
   const TURN = 0.55;
 
   const QS = new URLSearchParams(location.search);
@@ -37,6 +38,7 @@
   let sessions = [];
   let selected = null;
   let hovered = null;
+  let hoverLock = null;   // 非空时强制保持悬停（截图/自检）
   const hitSpheres = [];
   const messagePoints = [];
   let clock = 0;
@@ -204,8 +206,56 @@
   }
 
   // ---------------- 布局：话题聚类(XZ) → 星系漩涡 → 时间(Y) ----------------
+  // 力导向是 O(n²)×迭代数：n=1000 时是 2 亿次运算，浏览器会直接冻住十几秒。
+  // 超过 LAYOUT_MAX 就换成 O(n) 的确定性布点（按项目分扇区 + 时间螺旋）。
+  const LAYOUT_MAX = 260;
+
+  function fastLayout(list, times, tMin, span) {
+    const R = 95;
+    const sector = {};
+    let sectors = 0;
+    list.forEach(function (s, i) {
+      const key = s.project || s.title || '';
+      if (!(key in sector)) {
+        sector[key] = (sectors * 137.508) % 360;   // 黄金角，扇区分布均匀
+        sectors++;
+      }
+      const t = list.length > 1 ? i / (list.length - 1) : 0.5;
+      const a = sector[key] * Math.PI / 180 + t * 1.9;
+      const r = R * (0.30 + 0.70 * Math.sqrt(t));
+      s.pos = new THREE.Vector3(
+        Math.cos(a) * r + (rnd() - 0.5) * 5,
+        ((times[i] - tMin) / span - 0.5) * 58,
+        Math.sin(a) * r + (rnd() - 0.5) * 5
+      );
+    });
+  }
+
   function layout(list) {
     const n = list.length;
+    const times = list.map(function (s) { return s.createdAt || 0; });
+    const tMin = Math.min.apply(null, times), tMax = Math.max.apply(null, times);
+    const span = Math.max(1, tMax - tMin);
+
+    // 导出时带了 --embed：直接用语义坐标（已在 [-1,1] 内），比二元组 TF-IDF 更贴题；
+    // 时间只作为一点纵向偏移，不压过语义。
+    const embedded = list.filter(function (s) {
+      return Array.isArray(s.embed) && s.embed.length === 3;
+    }).length;
+    if (embedded >= Math.max(3, n * 0.8)) {
+      const R0 = 95;
+      list.forEach(function (s) {
+        const e = Array.isArray(s.embed) && s.embed.length === 3 ? s.embed : [0, 0, 0];
+        s.pos = new THREE.Vector3(e[0] * R0, e[1] * 12, e[2] * R0);
+      });
+      return;
+    }
+
+    if (n > LAYOUT_MAX) {
+      fastLayout(list, times, tMin, span);
+      return;
+    }
+
     const vecs = buildVectors(list);
     const sim = [];
     for (let i = 0; i < n; i++) {
@@ -267,10 +317,6 @@
       p.x = Math.cos(a) * r;
       p.z = Math.sin(a) * r;
     });
-
-    const times = list.map(function (s) { return s.createdAt || 0; });
-    const tMin = Math.min.apply(null, times), tMax = Math.max.apply(null, times);
-    const span = Math.max(1, tMax - tMin);
 
     list.forEach(function (s, i) {
       s.pos = new THREE.Vector3(
@@ -359,22 +405,28 @@
         tScene: { value: null },
         tBloom: { value: null },
         strength: { value: 0.42 },
-        vig: { value: 0.34 }
+        vig: { value: 0.34 },
+        uTime: { value: 0 },
+        grain: { value: 0.030 }
       },
       vertexShader: VERT,
       fragmentShader: [
         'uniform sampler2D tScene; uniform sampler2D tBloom;',
-        'uniform float strength; uniform float vig;',
+        'uniform float strength; uniform float vig; uniform float uTime; uniform float grain;',
         'varying vec2 vUv;',
+        'float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }',
         'void main(){',
         '  vec3 col = texture2D(tScene, vUv).rgb;',
         '  vec3 bloom = texture2D(tBloom, vUv).rgb;',
         '  col += bloom * strength;',
         '  col = (col * (2.51 * col + 0.03)) / (col * (2.43 * col + 0.59) + 0.14);', // ACES 近似
         '  col = pow(max(col, 0.0), vec3(0.4545));',      // 线性→sRGB，缺这步整屏会偏暗偏灰
+        // 胶片颗粒：在最终色彩空间里加一点点亮度噪声，去掉 3D 引擎的塑料感
+        '  float g = hash(gl_FragCoord.xy + fract(uTime * 0.7) * 91.7) - 0.5;',
+        '  col += g * grain * (0.35 + 0.65 * (1.0 - dot(col, vec3(0.333))));',
         '  float d = length(vUv - 0.5);',
         '  col *= mix(1.0, 1.0 - vig, smoothstep(0.30, 0.86, d));',
-        '  gl_FragColor = vec4(col, 1.0);',
+        '  gl_FragColor = vec4(max(col, 0.0), 1.0);',
         '}'
       ].join('\n'),
       depthTest: false, depthWrite: false
@@ -453,6 +505,7 @@
     addStarfield();
     addGalaxy();
     addNebula();
+    initShockwave();
     // 流星条容易糊成硬边白块，太阳系光晕会糊标签——都改成默认关闭，需要时 ?meteor=1 / ?sun=1
     if (QS.get('meteor') === '1') addMeteors();
     if (QS.get('sun') === '1') addSolarSystem();
@@ -633,7 +686,7 @@
       // 核心（带一点本星颜色，纯白在泛光下会全糊成一片）
       const core = new THREE.Mesh(
         new THREE.SphereGeometry(0.85 + Math.min(1.6, s.msgCount / 420), 18, 18),
-        new THREE.MeshBasicMaterial({ color: color.clone().lerp(new THREE.Color(0xffffff), 0.62) })
+        new THREE.MeshBasicMaterial({ color: color.clone().lerp(new THREE.Color(0xffffff), 0.38) })
       );
       group.add(core);
 
@@ -658,6 +711,20 @@
         new THREE.LineBasicMaterial({ color: color, transparent: true, opacity: 0.16 })
       );
       group.add(ring);
+
+      // 超巨星（消息多）多一层缓慢自转的日冕碎片环
+      let corona = null;
+      if (s.msgCount >= 40 && sessions.length <= 400) {
+        corona = new THREE.Mesh(
+          new THREE.RingGeometry(2.1, 2.55, 72),
+          new THREE.MeshBasicMaterial({
+            color: color, transparent: true, opacity: 0.30, side: THREE.DoubleSide,
+            blending: THREE.AdditiveBlending, depthWrite: false
+          })
+        );
+        corona.rotation.x = -Math.PI / 2 + 0.18;
+        group.add(corona);
+      }
 
       // 尘埃：每条消息一个点
       const n = s.messages.length;
@@ -701,7 +768,7 @@
       scene.add(group);
       s.obj = {
         group: group, glow: glow, core: core, points: points,
-        label: ls, ring: ring, color: color, aspect: lab.aspect,
+        label: ls, ring: ring, corona: corona, color: color, aspect: lab.aspect,
         baseGlow: gs, scale: 1, liftCur: 0, liftT: 0
       };
       // 透明度目标值，逐帧逼近 = 所有淡入淡出都平滑
@@ -716,12 +783,42 @@
   let linkObj = null, linkMat = null, linkGeo = null;
   let linkOpacity = 0;
 
+  // 每根连线画 3 股，抵消 WebGL 只有 1px 线宽的观感（看着才像发光纤维）
+  const LINK_STRANDS = 3;
+  const LINK_MAX = 3;
+
   function buildLinks() {
     linkGeo = new THREE.BufferGeometry();
-    linkGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6 * 3), 3));
-    linkMat = new THREE.LineBasicMaterial({
-      color: 0x9fe2ff, transparent: true, opacity: 0,
-      blending: THREE.AdditiveBlending, depthWrite: false
+    const verts = LINK_MAX * LINK_STRANDS * 2;
+    linkGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(verts * 3), 3));
+    linkGeo.setAttribute('aProg', new THREE.BufferAttribute(new Float32Array(verts), 1));
+    // 流光光纤：沿线跑的光斑由 aProg + uTime 算，不用贴图
+    linkMat = new THREE.ShaderMaterial({
+      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+      uniforms: {
+        uTime: { value: 0 },
+        uOpacity: { value: 0 },
+        uColor: { value: new THREE.Color(0x9fe2ff) }
+      },
+      vertexShader: [
+        'attribute float aProg;',
+        'varying float vProg;',
+        'void main(){',
+        '  vProg = aProg;',
+        '  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);',
+        '}'
+      ].join('\n'),
+      fragmentShader: [
+        'uniform vec3 uColor; uniform float uTime; uniform float uOpacity;',
+        'varying float vProg;',
+        'void main(){',
+        '  float pulse = sin(vProg * 6.0 - uTime * 5.0);',
+        '  pulse = pow(max(pulse, 0.0), 3.0);',
+        '  float a = (0.34 + pulse * 0.66) * uOpacity;',
+        '  vec3 c = mix(uColor * 0.7, vec3(1.0), pulse * 0.8);',
+        '  gl_FragColor = vec4(c, a);',
+        '}'
+      ].join('\n')
     });
     linkObj = new THREE.LineSegments(linkGeo, linkMat);
     linkObj.frustumCulled = false;
@@ -741,13 +838,177 @@
 
   function showLinks(s) {
     const arr = linkGeo.attributes.position.array;
-    let k = 0;
+    const prg = linkGeo.attributes.aProg.array;
+    const camRight = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0);
+    const dir = new THREE.Vector3(), off = new THREE.Vector3();
+    let vi = 0;
     s.near.forEach(function (o) {
-      arr[k++] = s.pos.x; arr[k++] = s.pos.y; arr[k++] = s.pos.z;
-      arr[k++] = o.pos.x; arr[k++] = o.pos.y; arr[k++] = o.pos.z;
+      dir.subVectors(o.pos, s.pos).normalize();
+      // 垂直于视线与连线方向的偏移，画面里才会呈现成有宽度的一束
+      off.crossVectors(dir, camRight).normalize();
+      for (let k = 0; k < LINK_STRANDS; k++) {
+        const t = (k - (LINK_STRANDS - 1) / 2) * 0.55;
+        arr[vi * 3] = s.pos.x + off.x * t;
+        arr[vi * 3 + 1] = s.pos.y + off.y * t;
+        arr[vi * 3 + 2] = s.pos.z + off.z * t;
+        prg[vi] = 0; vi++;
+        arr[vi * 3] = o.pos.x + off.x * t;
+        arr[vi * 3 + 1] = o.pos.y + off.y * t;
+        arr[vi * 3 + 2] = o.pos.z + off.z * t;
+        prg[vi] = 1; vi++;
+      }
     });
     linkGeo.attributes.position.needsUpdate = true;
+    linkGeo.attributes.aProg.needsUpdate = true;
     linkObj.visible = true;
+  }
+
+  // ---------------- 引力冲击波：点星时在 XZ 平面炸开一圈 ----------------
+  const shock = { mesh: null, t0: 0, dur: 900, active: false, maxScale: 30 };
+
+  function initShockwave() {
+    const geo = new THREE.RingGeometry(0.86, 1.0, 96);
+    const mat = new THREE.ShaderMaterial({
+      transparent: true, depthWrite: false, side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending,
+      uniforms: {
+        uColor: { value: new THREE.Color(0x7fe2ff) },
+        uProgress: { value: 0 }
+      },
+      vertexShader: [
+        'varying vec2 vUv;',
+        'void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }'
+      ].join('\n'),
+      fragmentShader: [
+        'uniform vec3 uColor; uniform float uProgress;',
+        'varying vec2 vUv;',
+        'void main(){',
+        '  float d = length(vUv - 0.5) * 2.0;',
+        '  float ring = smoothstep(0.0, 0.45, d) * smoothstep(1.0, 0.62, d);',
+        '  float a = ring * (1.0 - uProgress) * 0.85;',
+        '  if (a < 0.004) discard;',
+        '  gl_FragColor = vec4(uColor, a);',
+        '}'
+      ].join('\n')
+    });
+    shock.mesh = new THREE.Mesh(geo, mat);
+    shock.mesh.rotation.x = -Math.PI / 2;
+    shock.mesh.visible = false;
+    scene.add(shock.mesh);
+  }
+
+  function triggerShockwave(pos) {
+    if (!shock.mesh) return;
+    shock.mesh.position.copy(pos);
+    shock.mesh.scale.setScalar(0.6);
+    shock.mesh.visible = true;
+    shock.t0 = performance.now();
+    shock.active = true;
+  }
+
+  function updateShockwave() {
+    if (!shock.active) return;
+    const p = Math.min(1, (performance.now() - shock.t0) / shock.dur);
+    const e = 1 - Math.pow(1 - p, 3);          // easeOutCubic
+    shock.mesh.scale.setScalar(0.6 + e * shock.maxScale);
+    shock.mesh.material.uniforms.uProgress.value = e;
+    if (p >= 1) { shock.active = false; shock.mesh.visible = false; }
+  }
+
+  // ---------------- 音效：纯 Web Audio 合成，零素材 ----------------
+  const sfx = {
+    ctx: null, on: true, drone: null, droneGain: null,
+    unlock: function () {
+      if (!this.ctx) {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return false;
+        this.ctx = new AC();
+      }
+      if (this.ctx.state === 'suspended') this.ctx.resume();
+      return true;
+    },
+    // 悬停：清脆的谐波短音
+    blip: function () {
+      if (!this.on || !this.unlock()) return;
+      const t = this.ctx.currentTime;
+      const osc = this.ctx.createOscillator();
+      const g = this.ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(880, t);
+      osc.frequency.exponentialRampToValueAtTime(1320, t + 0.08);
+      g.gain.setValueAtTime(0.022, t);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.09);
+      osc.connect(g); g.connect(this.ctx.destination);
+      osc.start(t); osc.stop(t + 0.1);
+    },
+    // 跃迁：低通下潜
+    warp: function () {
+      if (!this.on || !this.unlock()) return;
+      const t = this.ctx.currentTime;
+      const osc = this.ctx.createOscillator();
+      const filt = this.ctx.createBiquadFilter();
+      const g = this.ctx.createGain();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(180, t);
+      osc.frequency.exponentialRampToValueAtTime(35, t + 0.45);
+      filt.type = 'lowpass';
+      filt.frequency.setValueAtTime(420, t);
+      filt.frequency.exponentialRampToValueAtTime(80, t + 0.45);
+      g.gain.setValueAtTime(0.06, t);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.45);
+      osc.connect(filt); filt.connect(g); g.connect(this.ctx.destination);
+      osc.start(t); osc.stop(t + 0.46);
+    },
+    // 环境底噪：粉红噪声循环，音量极低
+    startDrone: function () {
+      if (this.drone || !this.on || !this.unlock()) return;
+      const ctx = this.ctx;
+      const len = ctx.sampleRate * 4;
+      const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+      const data = buf.getChannelData(0);
+      let last = 0;
+      for (let i = 0; i < len; i++) {
+        const white = Math.random() * 2 - 1;
+        last = (last + 0.02 * white) / 1.02;      // 简易粉红噪声
+        data[i] = last * 3.2;
+      }
+      const src = ctx.createBufferSource();
+      src.buffer = buf; src.loop = true;
+      const filt = ctx.createBiquadFilter();
+      filt.type = 'lowpass'; filt.frequency.value = 320;
+      const gain = ctx.createGain();
+      gain.gain.value = 0.012;                    // 很轻，只是垫底
+      src.connect(filt); filt.connect(gain); gain.connect(ctx.destination);
+      src.start();
+      this.drone = src; this.droneGain = gain;
+    },
+    toggle: function () {
+      this.on = !this.on;
+      if (this.on) { this.startDrone(); }
+      else if (this.droneGain) { this.droneGain.gain.value = 0; }
+      if (this.on && this.droneGain) this.droneGain.gain.value = 0.012;
+      return this.on;
+    }
+  };
+
+  // ---------------- 黑客解密式文字渐入 ----------------
+  function scrambleText(el, target, duration) {
+    const chars = '!<>-_\\/[]{}=+*^?#0123456789ABCDEF';
+    const t0 = performance.now();
+    const dur = duration || 320;
+    if (el._scrTimer) cancelAnimationFrame(el._scrTimer);
+    function frame(now) {
+      const p = Math.min(1, (now - t0) / dur);
+      const cut = Math.floor(p * target.length);
+      let out = target.slice(0, cut);
+      for (let i = cut; i < target.length; i++) {
+        out += (target[i] === ' ' ? ' ' : chars[Math.floor(Math.random() * chars.length)]);
+      }
+      el.textContent = out;
+      if (p < 1) el._scrTimer = requestAnimationFrame(frame);
+      else { el.textContent = target; el._scrTimer = 0; }
+    }
+    el._scrTimer = requestAnimationFrame(frame);
   }
 
   // ---------------- 流星 ----------------
@@ -1177,6 +1438,7 @@
 
   let hoverTick = 0;
   function updateHover() {
+    if (hoverLock) { setHover(hoverLock); return; }   // 截图/自检用
     if (!pointerPx.moved) return;
     if (++hoverTick % 2) return;
     pointerPx.moved = false;
@@ -1190,9 +1452,44 @@
   function setHover(s) {
     if (s === hovered) return;
     hovered = s;
-    renderer.domElement.style.cursor = s ? 'pointer' : 'grab';
-    if (s) showLinks(s);
-    else linkObj.visible = false;
+    if (s) {
+      showLinks(s);
+      sfx.blip();
+      reticleLock(s);
+    } else {
+      linkObj.visible = false;
+      reticleLock(null);
+    }
+  }
+
+  // ---------------- 瞄准准星：跟着鼠标走，锁定时收缩并显示坐标 ----------------
+  const reticle = { el: null, dot: null, label: null, locked: false };
+
+  function initReticle() {
+    reticle.el = document.getElementById('reticle');
+    if (!reticle.el) return;
+    reticle.label = reticle.el.querySelector('.ret-coord');
+    window.addEventListener('pointermove', function (e) {
+      reticle.el.style.transform = 'translate(' + e.clientX + 'px,' + e.clientY + 'px)';
+      reticle.el.classList.add('on');
+    }, { passive: true });
+    document.addEventListener('pointerleave', function () {
+      reticle.el.classList.remove('on');
+    });
+  }
+
+  function reticleLock(s) {
+    if (!reticle.el) return;
+    reticle.locked = !!s;
+    reticle.el.classList.toggle('lock', !!s);
+    if (!s) { reticle.label.textContent = ''; return; }
+    // 用位置换算出「赤经/赤纬」，纯装饰，但每颗星都不同
+    const r = Math.max(1, s.pos.length());
+    let ra = (Math.atan2(s.pos.z, s.pos.x) / (Math.PI * 2) + 1) % 1;
+    const dec = Math.asin(Math.max(-1, Math.min(1, s.pos.y / r))) * 180 / Math.PI;
+    const hh = Math.floor(ra * 24), mm = Math.floor((ra * 24 - hh) * 60);
+    reticle.label.textContent =
+      'RA ' + p2(hh) + 'h' + p2(mm) + 'm  DEC ' + (dec >= 0 ? '+' : '') + dec.toFixed(1) + '°';
   }
 
   function closePanel() {
@@ -1211,7 +1508,7 @@
     selected = s;
     document.getElementById('panel').classList.add('open');
     document.getElementById('p-proj').textContent = s.project || '';
-    document.getElementById('p-title').textContent = s.title;
+    scrambleText(document.getElementById('p-title'), s.title, 340);
     document.getElementById('p-meta').textContent =
       s.msgCount + ' 条消息 · ' +
       (s.toolCount || 0) + ' 次工具调用 · ' +
@@ -1222,6 +1519,8 @@
     // 缓动飞过去
     const r = RING_R0 + s.msgCount * RING_DR;
     flightTo(s.pos, Math.max(30, r * 2.6), 1.15, easeInOutCubic);
+    triggerShockwave(s.pos);
+    sfx.warp();
     panelShiftT = 1;
 
     refreshOpacity();
@@ -1313,32 +1612,73 @@
   function p2(n) { return n < 10 ? '0' + n : '' + n; }
 
   // ---------------- 侧栏 ----------------
+  // 会话多了以后，把几千个 DOM 节点一次性塞进侧栏会直接卡住首屏：
+// 超过 VIRT_MIN 条就只渲染视口附近那几十条（虚拟滚动），行高固定才可能算得准。
+  const VIRT_MIN = 120;
+  const VIRT_ROW = 58;
+  const vlist = { on: false, box: null, inner: null, dim: {} };
+
+  function makeListItem(s) {
+    const el = document.createElement('div');
+    el.className = 'item';
+    el.dataset.id = s.id;
+
+    const dot = document.createElement('div');
+    dot.className = 'dot';
+    dot.style.color = '#' + s.obj.color.getHexString();
+    dot.style.background = '#' + s.obj.color.getHexString();
+
+    const wrap = document.createElement('div');
+    const t = document.createElement('div');
+    t.className = 't';
+    t.textContent = s.title;
+    const m = document.createElement('div');
+    m.className = 'm';
+    m.textContent = s.msgCount + ' 条 · ' + fmt(s.createdAt).slice(5, 16);
+    wrap.appendChild(t); wrap.appendChild(m);
+
+    el.appendChild(dot); el.appendChild(wrap);
+    el.onclick = function () { selectSession(s, null); };
+    if (vlist.dim[s.id]) el.style.opacity = 0.26;
+    return el;
+  }
+
+  function renderWindow() {
+    const box = vlist.box, inner = vlist.inner;
+    if (!box || !inner || !vlist.on) return;
+    const n = sessions.length;
+    const h = box.clientHeight || 600;
+    const first = Math.max(0, Math.floor(box.scrollTop / VIRT_ROW) - 5);
+    const last = Math.min(n, Math.ceil((box.scrollTop + h) / VIRT_ROW) + 5);
+    inner.innerHTML = '';
+    inner.style.paddingTop = (first * VIRT_ROW) + 'px';
+    inner.style.paddingBottom = (Math.max(0, n - last) * VIRT_ROW) + 'px';
+    const frag = document.createDocumentFragment();
+    for (let i = first; i < last; i++) frag.appendChild(makeListItem(sessions[i]));
+    inner.appendChild(frag);
+  }
+
   function buildList() {
     const box = document.getElementById('list');
+    vlist.box = box;
     box.innerHTML = '';
-    sessions.forEach(function (s) {
-      const el = document.createElement('div');
-      el.className = 'item';
-      el.dataset.id = s.id;
+    vlist.on = sessions.length > VIRT_MIN;
+    box.classList.toggle('virtual', vlist.on);
 
-      const dot = document.createElement('div');
-      dot.className = 'dot';
-      dot.style.color = '#' + s.obj.color.getHexString();
-      dot.style.background = '#' + s.obj.color.getHexString();
+    if (!vlist.on) {
+      const frag = document.createDocumentFragment();
+      sessions.forEach(function (s) { frag.appendChild(makeListItem(s)); });
+      box.appendChild(frag);
+      return;
+    }
 
-      const wrap = document.createElement('div');
-      const t = document.createElement('div');
-      t.className = 't';
-      t.textContent = s.title;
-      const m = document.createElement('div');
-      m.className = 'm';
-      m.textContent = s.msgCount + ' 条 · ' + fmt(s.createdAt).slice(5, 16);
-      wrap.appendChild(t); wrap.appendChild(m);
-
-      el.appendChild(dot); el.appendChild(wrap);
-      el.onclick = function () { selectSession(s, null); };
-      box.appendChild(el);
-    });
+    const inner = document.createElement('div');
+    inner.className = 'vlist-inner';
+    box.appendChild(inner);
+    vlist.inner = inner;
+    renderWindow();
+    box.addEventListener('scroll', renderWindow, { passive: true });
+    window.addEventListener('resize', renderWindow);
   }
 
   // ---------------- 搜索 ----------------
@@ -1348,13 +1688,21 @@
       searchKey = q.value.trim().toLowerCase();
       refreshOpacity();
 
+      vlist.dim = {};
       sessions.forEach(function (s) {
         const hit = !searchKey ||
           s.title.toLowerCase().indexOf(searchKey) >= 0 ||
           s.messages.some(function (m) { return m.text.toLowerCase().indexOf(searchKey) >= 0; });
-        const el = document.querySelector('.item[data-id="' + s.id + '"]');
-        if (el) el.style.opacity = hit ? 1 : 0.26;
+        if (!hit) vlist.dim[s.id] = 1;
       });
+      if (vlist.on) {
+        renderWindow();          // 虚拟列表只改了视口内那几行，得重画
+      } else {
+        sessions.forEach(function (s) {
+          const el = document.querySelector('.item[data-id="' + s.id + '"]');
+          if (el) el.style.opacity = vlist.dim[s.id] ? 0.26 : 1;
+        });
+      }
     });
   }
 
@@ -1369,6 +1717,7 @@
       s.obj.ring.material.opacity = toward(s.obj.ring.material.opacity, o.ring, dt, 7);
 
       s.obj.group.rotation.y += dt * (0.045 + i * 0.004);
+      if (s.obj.corona) s.obj.corona.rotation.z += dt * 0.22;
 
       const hover = hovered === s ? 1.45 : 1;
       const pulse = 1 + Math.sin(clock * 0.0016 + i * 1.3) * 0.045;
@@ -1377,6 +1726,16 @@
       s.obj.glow.material.rotation += dt * 0.1;
 
       const d = camera.position.distanceTo(s.obj.group.position);
+
+      // LOD：拉远时省掉每条消息的尘埃点和轨道圈，几千个会话也不掉帧；
+      // 推近到能看清时才出现。阈值按相机距离，缩放是连续的，不会闪。
+      const far = frameDist || 240;
+      s.obj.points.visible = d < far * 1.15;
+      s.obj.ring.visible = d < far * 1.6;
+      // 标签每人一张 canvas 纹理，上千个会话就是上千次 draw call：
+      // 只在近处显示，远处的靠光晕和侧栏认人。
+      if (sessions.length > 400) s.obj.label.visible = d < far * 1.35;
+
       const sc = Math.max(2.0, Math.min(16, d * 0.032));
       s.obj.label.scale.set(sc * s.obj.aspect, sc, 1);
       // 屏幕像素 -> 世界单位，用来把打架的标签往上顶
@@ -1386,8 +1745,9 @@
     });
 
     if (linkObj && linkObj.visible) {
-      linkOpacity = toward(linkMat.opacity, hovered ? 0.30 : 0, dt, 8);
-      linkMat.opacity = linkOpacity;
+      linkOpacity = toward(linkMat.uniforms.uOpacity.value, hovered ? 0.55 : 0, dt, 8);
+      linkMat.uniforms.uOpacity.value = linkOpacity;
+      linkMat.uniforms.uTime.value = clock * 0.001;
       if (linkOpacity < 0.01 && !hovered) linkObj.visible = false;
     }
   }
@@ -1441,12 +1801,14 @@
     updateStars(dt);
     updateMeteors(dt);
     updateSolarSystem(dt);
+    updateShockwave(dt);
 
     if (starfield) starfield.rotation.y += dt * 0.004;
     for (let i = 0; i < nebulas.length; i++) {
       nebulas[i].material.opacity = 0.26 + Math.sin(clock * 0.0004 + i * 2) * 0.05;
     }
     const tsec = clock * 0.001;
+    if (post.comp) post.comp.uniforms.uTime.value = tsec;
     if (galaxyPts && galaxyPts.material.uniforms) galaxyPts.material.uniforms.uTime.value = tsec;
     if (dustPts && dustPts.material.uniforms) dustPts.material.uniforms.uTime.value = tsec;
   }
@@ -1604,6 +1966,7 @@
     orbit.radius = used;
     orbit.baseShift = -sideW / 2 * (2 * tanV / H) * orbit.radius;
     updateCamera(0);
+    frameDist = orbit.radius;   // LOD 的基准距离：取景时的相机距离
 
     // 太阳系：推到星盘后面很远的地方，只剩一层暖色底光，不参与构图
     if (systemGroup && systemGroup.parent) {
@@ -1681,12 +2044,37 @@
       buildStars();
       buildList();
       initInteraction();
+      // 调试：?debug=1 时把运行时错误写进标题，headless 抓 DOM 就能看到
+      if (QS.get('debug') === '1') {
+        window.addEventListener('error', function (e) {
+          document.title = 'ERR ' + (e.message || '') + ' @' +
+            String(e.filename || '').split('/').pop() + ':' + e.lineno;
+        });
+      }
+
       initSearch();
+
+      initReticle();
+      // 第一次交互再解锁音频，符合浏览器自动播放策略
+      window.addEventListener('pointerdown', function () { sfx.startDrone(); }, { once: true });
+      const muteBtn = document.getElementById('mute');
+      if (muteBtn) {
+        muteBtn.onclick = function () {
+          const on = sfx.toggle();
+          muteBtn.classList.toggle('off', !on);
+          muteBtn.textContent = on ? '◉ 音' : '◎ 静';
+        };
+      }
 
       document.getElementById('close').onclick = closePanel;
 
       // 自检：模拟「选中会话 → 点右上角 ×」，并报告 × 位置上最顶层的元素是谁
       if (QS.get('selftest') === '1') {
+        if (QS.get('hover') === '1') {
+          // 悬停态截图用：合成一次指针移动 + 锁定第二颗星
+          window.dispatchEvent(new PointerEvent('pointermove', { clientX: 1120, clientY: 430 }));
+          setTimeout(function () { hoverLock = sessions[1]; setHover(sessions[1]); }, 120);
+        }
         setTimeout(function () {
           let flow = 'n/a', top = 'n/a', err = '';
           try {
@@ -1713,7 +2101,11 @@
                 cb.click();
                 after += ' state=' + (document.getElementById('panel').classList.contains('open') ? 'still-open' : 'closed');
               } catch (e2) { after = 'ERR ' + String((e2 && e2.message) || e2); }
-              document.title = 'TEST ' + JSON.stringify({ flow: flow, topAt: String(top2), after: after, err: err });
+              document.title = 'TEST ' + JSON.stringify({
+              flow: flow, topAt: String(top2), after: after, err: err,
+              pos0: sessions[0].pos ? [sessions[0].pos.x, sessions[0].pos.y, sessions[0].pos.z].map(Math.round) : null,
+              layout: (sessions[0].embed ? 'embed' : (sessions.length > 260 ? 'fast' : 'force'))
+            });
             }, 900);
           } catch (e) { err = String((e && e.message) || e); document.title = 'TEST ' + JSON.stringify({ flow: flow, topAt: top, after: '', err: err }); }
         }, 700);

@@ -38,6 +38,7 @@
 
   <div class="search">
     <input id="q" type="text" placeholder="搜索记忆内容…" spellcheck="false">
+    <button class="mute" id="mute" aria-label="音效开关">◉ 音</button>
   </div>
 
   <button class="menu" id="menu" aria-label="会话列表">会话</button>
@@ -60,6 +61,16 @@
 
   <div class="tips">
     <b>拖拽</b> 旋转 · <b>滚轮</b> 缩放 · <b>点击星辰</b> 查看对话
+  </div>
+
+  <!-- 科幻准星：跟随指针，锁定星辰时收缩并显示赤经赤纬 -->
+  <div id="reticle" aria-hidden="true">
+    <span class="ret-ring"></span>
+    <span class="ret-tick t"></span>
+    <span class="ret-tick r"></span>
+    <span class="ret-tick b"></span>
+    <span class="ret-tick l"></span>
+    <span class="ret-coord"></span>
   </div>
 </div>
 
