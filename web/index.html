@@ -3,10 +3,24 @@
 <head>
 <meta charset="UTF-8">
 <title>记忆宇宙 · Memory Universe</title>
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#04060d">
+<meta name="description" content="把对话记录渲染成可飞行、可点击的 3D 星图">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
+
+<!-- 开场：星际跃迁 -->
+<div id="boot">
+  <div class="boot-ring"></div>
+  <div class="boot-ring r2"></div>
+  <div class="boot-in">
+    <div class="boot-title">记忆<b>宇宙</b></div>
+    <div class="boot-sub">正在穿越记忆星云</div>
+    <div class="boot-bar"><i></i></div>
+  </div>
+</div>
 
 <div class="hud">
   <div class="brand">
@@ -20,16 +34,19 @@
   </div>
 
   <div class="search">
-    <input id="q" type="text" placeholder="搜索记忆内容…">
+    <input id="q" type="text" placeholder="搜索记忆内容…" spellcheck="false">
   </div>
 
-  <div class="side">
+  <button class="menu" id="menu" aria-label="会话列表">会话</button>
+
+  <div class="side" id="side">
     <p class="hint">会话星图</p>
     <div id="list"></div>
   </div>
 
   <div class="panel" id="panel">
-    <button class="close" id="close">×</button>
+    <span class="glow-edge" aria-hidden="true"></span>
+    <button class="close" id="close" aria-label="关闭">×</button>
     <div class="head">
       <div class="proj" id="p-proj"></div>
       <h2 id="p-title"></h2>

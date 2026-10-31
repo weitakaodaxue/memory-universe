@@ -1,32 +1,69 @@
 /* =========================================================
    记忆宇宙 · Memory Universe
-   读取 memory.json，把每次对话渲染成一颗恒星，
-   每条消息是恒星周围的一粒尘埃。
+   把每次对话渲染成一颗恒星，每条消息是恒星周围的一粒尘埃。
+   ---------------------------------------------------------
+   ?bloom=0   关闭后期泛光        ?swirl=0   关闭星系漩涡
+   ?boot=0    跳过开场动画        ?warm=4    动画预演 4 秒
+   ?focus=3   开局聚焦第 4 个会话  ?debug=1   调试信息写进标题
    ========================================================= */
 (function () {
   'use strict';
 
   // ---------------- 常量 ----------------
-  const COL_USER = 0xffb056;   // 你
-  const COL_AI = 0x4fd8ff;     // 我
-  const RING_R0 = 3.0;         // 尘埃环起始半径
-  const RING_DR = 0.085;       // 每条消息外扩
-  const TURN = 0.55;           // 螺旋角速度（弧度/条）
+  const COL_USER = 0xffb056;
+  const COL_AI = 0x4fd8ff;
+  const RING_R0 = 3.0;
+  const RING_DR = 0.085;
+  const TURN = 0.55;
+
+  const QS = new URLSearchParams(location.search);
+  function flag(k, dflt) {
+    const v = QS.get(k);
+    return v === null ? dflt : (v !== '0' && v !== 'false');
+  }
+  const WARM = parseFloat(QS.get('warm') || '0');
+  const DEBUG = QS.has('debug');
+  const USE_BLOOM = flag('bloom', true);
+  const USE_SWIRL = flag('swirl', true);
+  const USE_BOOT = flag('boot', true);
 
   // ---------------- 全局状态 ----------------
   let scene, camera, renderer, raycaster;
-  const pointer = new THREE.Vector2(-99, -99);
+  const pointer = new THREE.Vector2(0, 0);      // -1..1，用于视差
+  const pointerPx = { x: -1e4, y: -1e4, moved: true };
   let sessions = [];
   let selected = null;
-  const pickables = [];
+  let hovered = null;
+  const hitSpheres = [];
+  const messagePoints = [];
+  let clock = 0;
 
   // 轨道相机
   const orbit = {
     theta: 0.9, phi: 1.12, radius: 210,
-    target: new THREE.Vector3(0, 0, 0),
-    tTheta: 0.9, tPhi: 1.12, tRadius: 210,
-    tTarget: new THREE.Vector3(0, 0, 0)
+    target: new THREE.Vector3(-26, 0, 0),
+    tTheta: 0.9, tPhi: 1.12
   };
+  let flight = null;          // 缓动飞行
+  let panelShift = 0;         // 面板打开时把视线中心右移
+  let panelShiftT = 0;
+
+  // ---------------- 缓动 ----------------
+  function easeInOutCubic(k) {
+    return k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2;
+  }
+  function easeOutQuint(k) { return 1 - Math.pow(1 - k, 5); }
+  function toward(cur, target, dt, speed) {
+    return cur + (target - cur) * (1 - Math.exp(-speed * dt));
+  }
+
+  function flightTo(target, radius, dur, ease) {
+    flight = {
+      t: 0, dur: dur || 1.15, ease: ease || easeInOutCubic,
+      r0: orbit.radius, r1: radius,
+      p0: orbit.target.clone(), p1: target.clone()
+    };
+  }
 
   // ---------------- 小工具 ----------------
   function mulberry32(a) {
@@ -38,9 +75,6 @@
     };
   }
   const rnd = mulberry32(20261030);
-  const DEBUG = location.search.indexOf('debug') >= 0;
-  // ?warm=4.5 表示先把动画快进 4.5 秒再画，方便截图/演示拿到中间帧
-  const WARM = parseFloat(new URLSearchParams(location.search).get('warm') || '0');
 
   function glowTexture() {
     const s = 128, c = document.createElement('canvas');
@@ -125,7 +159,9 @@
 
   function buildVectors(list) {
     const docs = list.map(function (s) {
-      const seed = s.title + ' ' + s.messages.slice(0, 6).map(function (m) { return m.text.slice(0, 400); }).join(' ');
+      const seed = s.title + ' ' + s.messages.slice(0, 6).map(function (m) {
+        return m.text.slice(0, 400);
+      }).join(' ');
       return bigrams(seed);
     });
     const df = {};
@@ -155,7 +191,7 @@
     return s;
   }
 
-  // ---------------- 布局：话题聚类(XZ) + 时间(Y) ----------------
+  // ---------------- 布局：话题聚类(XZ) → 星系漩涡 → 时间(Y) ----------------
   function layout(list) {
     const n = list.length;
     const vecs = buildVectors(list);
@@ -180,11 +216,11 @@
       const fx = new Array(n).fill(0), fz = new Array(n).fill(0);
       for (let i = 0; i < n; i++) {
         for (let j = i + 1; j < n; j++) {
-          let dx = pos[i].x - pos[j].x, dz = pos[i].z - pos[j].z;
-          let d2 = dx * dx + dz * dz + 0.01;
+          const dx = pos[i].x - pos[j].x, dz = pos[i].z - pos[j].z;
+          const d2 = dx * dx + dz * dz + 0.01;
           const d = Math.sqrt(d2);
-          const rep = 4200 / d2;                    // 排斥
-          const attr = sim[i][j] * 0.55 * d;        // 相似吸引
+          const rep = 4200 / d2;
+          const attr = sim[i][j] * 0.55 * d;
           const f = rep - attr;
           const ux = dx / d, uz = dz / d;
           fx[i] += ux * f; fz[i] += uz * f;
@@ -194,13 +230,11 @@
       for (let i = 0; i < n; i++) {
         pos[i].x += Math.max(-3, Math.min(3, fx[i] * 0.02));
         pos[i].z += Math.max(-3, Math.min(3, fz[i] * 0.02));
-        // 弱向心，避免飘太远
         pos[i].x *= 0.995;
         pos[i].z *= 0.995;
       }
     }
 
-    // 归一化到 ±R 并居中，避免整团星云偏到一边
     let cx = 0, cz = 0;
     pos.forEach(function (p) { cx += p.x; cz += p.z; });
     cx /= n; cz /= n;
@@ -210,26 +244,191 @@
     pos.forEach(function (p) { maxD = Math.max(maxD, Math.hypot(p.x, p.z)); });
     const scale = R / maxD;
 
+    // 与背景星系的旋臂同一族：角度随半径剪切，星团顺势排进旋臂
+    const SPIRAL_K = 0.92;
+    pos.forEach(function (p) {
+      p.x *= scale; p.z *= scale;
+      if (!USE_SWIRL) return;
+      const r = Math.hypot(p.x, p.z);
+      if (r < 1) return;
+      const a = Math.atan2(p.z, p.x) + SPIRAL_K * Math.log(Math.max(r, 8) / 26);
+      p.x = Math.cos(a) * r;
+      p.z = Math.sin(a) * r;
+    });
+
     const times = list.map(function (s) { return s.createdAt || 0; });
     const tMin = Math.min.apply(null, times), tMax = Math.max.apply(null, times);
     const span = Math.max(1, tMax - tMin);
 
     list.forEach(function (s, i) {
       s.pos = new THREE.Vector3(
-        pos[i].x * scale,
+        pos[i].x,
         ((times[i] - tMin) / span - 0.5) * 58,
-        pos[i].z * scale
+        pos[i].z
       );
     });
   }
 
+  // ---------------- 后期处理：泛光 + 暗角 ----------------
+  const post = {
+    on: false, rtScene: null, rtA: null, rtB: null,
+    quadScene: null, quadCam: null, quad: null,
+    bright: null, blur: null, comp: null
+  };
+
+  function makeRT(w, h) {
+    return new THREE.WebGLRenderTarget(
+      Math.max(2, Math.floor(w)), Math.max(2, Math.floor(h)), {
+        minFilter: THREE.LinearFilter,
+        magFilter: THREE.LinearFilter,
+        format: THREE.RGBAFormat,
+        type: THREE.UnsignedByteType,
+        depthBuffer: true,
+        stencilBuffer: false
+      });
+  }
+
+  const VERT = 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }';
+
+  function initPost() {
+    if (!USE_BLOOM) return;
+
+    const sz = renderer.getDrawingBufferSize(new THREE.Vector2());
+    post.rtScene = makeRT(sz.x, sz.y);
+    post.rtA = makeRT(sz.x / 2, sz.y / 2);
+    post.rtB = makeRT(sz.x / 2, sz.y / 2);
+
+    post.quadScene = new THREE.Scene();
+    post.quadCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+    post.quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.MeshBasicMaterial());
+    post.quad.frustumCulled = false;
+    post.quadScene.add(post.quad);
+
+    post.bright = new THREE.ShaderMaterial({
+      uniforms: {
+        tDiffuse: { value: null },
+        threshold: { value: 0.84 }
+      },
+      vertexShader: VERT,
+      fragmentShader: [
+        'uniform sampler2D tDiffuse; uniform float threshold; varying vec2 vUv;',
+        'void main(){',
+        '  vec3 c = texture2D(tDiffuse, vUv).rgb;',
+        '  float l = max(c.r, max(c.g, c.b));',
+        '  float k = smoothstep(threshold, threshold + 0.22, l);',
+        '  gl_FragColor = vec4(c * k, 1.0);',
+        '}'
+      ].join('\n'),
+      depthTest: false, depthWrite: false
+    });
+
+    post.blur = new THREE.ShaderMaterial({
+      uniforms: {
+        tDiffuse: { value: null },
+        dir: { value: new THREE.Vector2(1 / 512, 0) }
+      },
+      vertexShader: VERT,
+      fragmentShader: [
+        'uniform sampler2D tDiffuse; uniform vec2 dir; varying vec2 vUv;',
+        'void main(){',
+        '  vec3 s = texture2D(tDiffuse, vUv).rgb * 0.227027;',
+        '  s += texture2D(tDiffuse, vUv + dir * 1.3846153846).rgb * 0.3162162162;',
+        '  s += texture2D(tDiffuse, vUv - dir * 1.3846153846).rgb * 0.3162162162;',
+        '  s += texture2D(tDiffuse, vUv + dir * 3.2307692308).rgb * 0.0702702703;',
+        '  s += texture2D(tDiffuse, vUv - dir * 3.2307692308).rgb * 0.0702702703;',
+        '  gl_FragColor = vec4(s, 1.0);',
+        '}'
+      ].join('\n'),
+      depthTest: false, depthWrite: false
+    });
+
+    post.comp = new THREE.ShaderMaterial({
+      uniforms: {
+        tScene: { value: null },
+        tBloom: { value: null },
+        strength: { value: 0.40 },
+        vig: { value: 0.34 }
+      },
+      vertexShader: VERT,
+      fragmentShader: [
+        'uniform sampler2D tScene; uniform sampler2D tBloom;',
+        'uniform float strength; uniform float vig;',
+        'varying vec2 vUv;',
+        'void main(){',
+        '  vec3 col = texture2D(tScene, vUv).rgb;',
+        '  vec3 bloom = texture2D(tBloom, vUv).rgb;',
+        '  col += bloom * strength;',
+        '  col = col / (1.0 + col * 0.16);',            // 柔和压高光，不糊
+        '  float d = length(vUv - 0.5);',
+        '  col *= mix(1.0, 1.0 - vig, smoothstep(0.30, 0.86, d));',
+        '  gl_FragColor = vec4(col, 1.0);',
+        '}'
+      ].join('\n'),
+      depthTest: false, depthWrite: false
+    });
+
+    post.on = true;
+  }
+
+  function disposePost() {
+    if (!post.on) return;
+    post.rtScene.dispose();
+    post.rtA.dispose();
+    post.rtB.dispose();
+    post.on = false;
+  }
+
+  function resizePost() {
+    if (!post.on) return;
+    const sz = renderer.getDrawingBufferSize(new THREE.Vector2());
+    post.rtScene.setSize(Math.max(2, Math.floor(sz.x)), Math.max(2, Math.floor(sz.y)));
+    post.rtA.setSize(Math.max(2, Math.floor(sz.x / 2)), Math.max(2, Math.floor(sz.y / 2)));
+    post.rtB.setSize(Math.max(2, Math.floor(sz.x / 2)), Math.max(2, Math.floor(sz.y / 2)));
+  }
+
+  function blit(material, target) {
+    post.quad.material = material;
+    renderer.setRenderTarget(target);
+    renderer.render(post.quadScene, post.quadCam);
+  }
+
+  function renderFrame() {
+    if (!post.on) {
+      renderer.setRenderTarget(null);
+      renderer.render(scene, camera);
+      return;
+    }
+    renderer.setRenderTarget(post.rtScene);
+    renderer.render(scene, camera);
+
+    post.bright.uniforms.tDiffuse.value = post.rtScene.texture;
+    blit(post.bright, post.rtA);
+
+    for (let i = 0; i < 2; i++) {
+      post.blur.uniforms.tDiffuse.value = post.rtA.texture;
+      post.blur.uniforms.dir.value.set(1 / post.rtA.width, 0);
+      blit(post.blur, post.rtB);
+
+      post.blur.uniforms.tDiffuse.value = post.rtB.texture;
+      post.blur.uniforms.dir.value.set(0, 1 / post.rtB.height);
+      blit(post.blur, post.rtA);
+    }
+
+    post.comp.uniforms.tScene.value = post.rtScene.texture;
+    post.comp.uniforms.tBloom.value = post.rtA.texture;
+    blit(post.comp, null);
+  }
+
   // ---------------- 建场景 ----------------
+  let starfield = null;
+  const nebulas = [];
+
   function initScene() {
     scene = new THREE.Scene();
     scene.fog = new THREE.FogExp2(0x04060d, 0.0011);
 
     camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.5, 4000);
-    renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+    renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' });
     renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     renderer.setSize(innerWidth, innerHeight);
     renderer.setClearColor(0x04060d, 1);
@@ -239,9 +438,11 @@
     raycaster.params.Points.threshold = 1.8;
 
     addStarfield();
+    addGalaxy();
     addNebula();
     addMeteors();
     addSolarSystem();
+    initPost();
   }
 
   function addStarfield() {
@@ -268,7 +469,46 @@
       map: glowTexture(), transparent: true, opacity: 0.85,
       depthWrite: false, blending: THREE.AdditiveBlending
     });
-    scene.add(new THREE.Points(g, m));
+    starfield = new THREE.Points(g, m);
+    scene.add(starfield);
+  }
+
+  // 背景星系旋臂：与星团共用一条对数螺旋线
+  function addGalaxy() {
+    const ARMS = 2, PER = 1600, R0 = 24, RMAX = 236, TWIST = 1.18;
+    const N = ARMS * PER;
+    const pos = new Float32Array(N * 3);
+    const col = new Float32Array(N * 3);
+    const core = new THREE.Color(0xffd9a6);
+    const edge = new THREE.Color(0x6f8fd6);
+    const tmp = new THREE.Color();
+
+    for (let i = 0; i < N; i++) {
+      const arm = i % ARMS;
+      const t = Math.pow(rnd(), 0.65);
+      const r = R0 + t * (RMAX - R0);
+      const spread = (rnd() - 0.5) * (0.28 + t * 0.55);
+      const a = arm * (Math.PI * 2 / ARMS) + TWIST * Math.log(r / R0) + spread;
+
+      pos[i * 3] = Math.cos(a) * r;
+      pos[i * 3 + 1] = (rnd() - 0.5) * (5 - t * 3.4);
+      pos[i * 3 + 2] = Math.sin(a) * r;
+
+      tmp.copy(core).lerp(edge, Math.pow(t, 0.8));
+      const b = 0.42 + rnd() * 0.5;
+      col[i * 3] = tmp.r * b; col[i * 3 + 1] = tmp.g * b; col[i * 3 + 2] = tmp.b * b;
+    }
+
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    const pts = new THREE.Points(g, new THREE.PointsMaterial({
+      size: 1.55, sizeAttenuation: true, vertexColors: true,
+      map: glowTexture(), transparent: true, opacity: 0.42,
+      depthWrite: false, blending: THREE.AdditiveBlending
+    }));
+    pts.frustumCulled = false;
+    scene.add(pts);
   }
 
   function addNebula() {
@@ -280,8 +520,9 @@
         blending: THREE.AdditiveBlending, depthWrite: false
       }));
       const a = (i / 3) * Math.PI * 2;
-      s.position.set(Math.cos(a) * 260, (rnd() - 0.5) * 160, Math.sin(a) * 260);
-      s.scale.setScalar(520 + rnd() * 240);
+      s.position.set(Math.cos(a) * 300, (rnd() - 0.5) * 190, Math.sin(a) * 300);
+      s.scale.setScalar(560 + rnd() * 260);
+      nebulas.push(s);
       scene.add(s);
     }
   }
@@ -303,14 +544,21 @@
       glow.scale.setScalar(gs);
       group.add(glow);
 
-      // 核心
+      // 核心（带一点本星颜色，纯白在泛光下会全糊成一片）
       const core = new THREE.Mesh(
         new THREE.SphereGeometry(0.85 + Math.min(1.6, s.msgCount / 420), 18, 18),
-        new THREE.MeshBasicMaterial({ color: 0xffffff })
+        new THREE.MeshBasicMaterial({ color: color.clone().lerp(new THREE.Color(0xffffff), 0.62) })
       );
-      core.userData = { kind: 'session', id: s.id };
       group.add(core);
-      pickables.push(core);
+
+      // 拾取用的隐形球（比核心大，鼠标更容易命中）
+      const hit = new THREE.Mesh(
+        new THREE.SphereGeometry(7, 12, 12),
+        new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false })
+      );
+      hit.userData = { kind: 'session', id: s.id };
+      group.add(hit);
+      hitSpheres.push(hit);
 
       // 外圈（轨道示意）
       const seg = 96, arr = [];
@@ -351,7 +599,7 @@
       const points = new THREE.Points(pg, pm);
       points.userData = { kind: 'messages', id: s.id };
       group.add(points);
-      pickables.push(points);
+      messagePoints.push(points);
 
       // 标签
       const lab = labelTexture(s.title, '#' + color.getHexString());
@@ -365,8 +613,55 @@
       group.add(ls);
 
       scene.add(group);
-      s.obj = { group: group, glow: glow, core: core, points: points, label: ls, ring: ring, color: color, aspect: lab.aspect };
+      s.obj = {
+        group: group, glow: glow, core: core, points: points,
+        label: ls, ring: ring, color: color, aspect: lab.aspect,
+        baseGlow: gs, scale: 1, liftCur: 0, liftT: 0
+      };
+      // 透明度目标值，逐帧逼近 = 所有淡入淡出都平滑
+      s.op = { glow: 0.85, points: 0.95, label: 0.92, ring: 0.16 };
     });
+
+    buildLinks();
+    computeNeighbors();
+  }
+
+  // ---------------- 悬停连线 ----------------
+  let linkObj = null, linkMat = null, linkGeo = null;
+  let linkOpacity = 0;
+
+  function buildLinks() {
+    linkGeo = new THREE.BufferGeometry();
+    linkGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6 * 3), 3));
+    linkMat = new THREE.LineBasicMaterial({
+      color: 0x9fe2ff, transparent: true, opacity: 0,
+      blending: THREE.AdditiveBlending, depthWrite: false
+    });
+    linkObj = new THREE.LineSegments(linkGeo, linkMat);
+    linkObj.frustumCulled = false;
+    scene.add(linkObj);
+    linkObj.visible = false;
+  }
+
+  function computeNeighbors() {
+    sessions.forEach(function (s) {
+      const others = sessions.filter(function (o) { return o !== s; });
+      others.sort(function (a, b) {
+        return a.pos.distanceToSquared(s.pos) - b.pos.distanceToSquared(s.pos);
+      });
+      s.near = others.slice(0, 3);
+    });
+  }
+
+  function showLinks(s) {
+    const arr = linkGeo.attributes.position.array;
+    let k = 0;
+    s.near.forEach(function (o) {
+      arr[k++] = s.pos.x; arr[k++] = s.pos.y; arr[k++] = s.pos.z;
+      arr[k++] = o.pos.x; arr[k++] = o.pos.y; arr[k++] = o.pos.z;
+    });
+    linkGeo.attributes.position.needsUpdate = true;
+    linkObj.visible = true;
   }
 
   // ---------------- 流星 ----------------
@@ -381,7 +676,6 @@
     c.width = w; c.height = h;
     const g = c.getContext('2d');
 
-    // 纵向：尾端透明 -> 头端实白
     const vg = g.createLinearGradient(0, h, 0, 0);
     vg.addColorStop(0.00, 'rgba(120,200,255,0)');
     vg.addColorStop(0.45, 'rgba(170,225,255,.45)');
@@ -390,7 +684,6 @@
     g.fillStyle = vg;
     g.fillRect(0, 0, w, h);
 
-    // 横向羽化，避免出现生硬的矩形边
     const hg = g.createLinearGradient(0, 0, w, 0);
     hg.addColorStop(0.00, 'rgba(0,0,0,0)');
     hg.addColorStop(0.50, 'rgba(0,0,0,1)');
@@ -406,15 +699,12 @@
     streakTex = streakTexture();
     for (let i = 0; i < 9; i++) {
       const group = new THREE.Group();
-
-      // 拖尾：一张朝相机的长条渐变，按运动方向在屏幕空间旋转
       const streak = new THREE.Sprite(new THREE.SpriteMaterial({
         map: streakTex, color: 0xffffff, transparent: true, opacity: 0,
         blending: THREE.AdditiveBlending, depthWrite: false
       }));
       group.add(streak);
 
-      // 头部亮点
       const head = new THREE.Sprite(new THREE.SpriteMaterial({
         map: glowTexture(), color: 0xeaf7ff, transparent: true, opacity: 0,
         blending: THREE.AdditiveBlending, depthWrite: false
@@ -429,13 +719,11 @@
         life: 0, dur: 1, wait: 0
       };
       meteors.push(m);
-      // 错开出发时间，开场几秒内就有流星划过
       launchMeteor(m, i * 0.9 + rnd() * 2.0);
     }
   }
 
   function launchMeteor(m, wait) {
-    // 从星云外围斜穿而过，保证经过镜头正前方
     const R = 300;
     const a = rnd() * Math.PI * 2;
     const elev = (rnd() - 0.5) * 110;
@@ -476,9 +764,8 @@
       const fade = Math.sin(k * Math.PI);
 
       m.head.material.opacity = fade;
-      m.head.scale.setScalar(7 + fade * 8);
+      m.head.scale.setScalar(5 + fade * 6);
 
-      // 屏幕空间里算出运动方向，让拖尾永远顺着飞行的方向
       const p0 = m.group.position;
       _pa.copy(p0).project(camera);
       _pb.copy(p0).addScaledVector(m.dir, 24).project(camera);
@@ -488,15 +775,15 @@
       m.streak.material.rotation = ang;
       m.streak.scale.set(len * 0.18, len, 1);
       m.streak.position.copy(m.dir).multiplyScalar(-len * 0.5);
-      m.streak.material.opacity = fade * 0.95;
+      m.streak.material.opacity = fade * 0.55;
     }
   }
 
-  // ---------------- 太阳系：恒星 + 尘埃盘 + 轨道环 + 八大行星 ----------------
+  // ---------------- 太阳系 ----------------
   const planets = [];
   const systemGroup = new THREE.Group();
-  const SUN_OFF = -78;          // 恒星在盘面上的偏移（营造"光从一端扫过来"）
-  const SUN_ANG = Math.PI;      // 对应角度
+  const SUN_OFF = -78;
+  const SUN_ANG = Math.PI;
 
   function planetTexture(bands) {
     const w = 256, h = 128;
@@ -518,38 +805,35 @@
   function addSolarSystem() {
     const tex = glowTexture();
 
-    // 盘面：接近侧视，环拉成横贯画面的长椭圆，正好当背景
-    systemGroup.position.set(10, 96, -300);
+    systemGroup.position.set(0, 58, -285);
     systemGroup.rotation.x = 1.02;
     systemGroup.rotation.z = -0.14;
     scene.add(systemGroup);
 
-    // ---------- 恒星 ----------
     const sunGroup = new THREE.Group();
     sunGroup.position.set(SUN_OFF, 0, 0);
     systemGroup.add(sunGroup);
 
     const haloOuter = new THREE.Sprite(new THREE.SpriteMaterial({
-      map: tex, color: 0xff6a1e, transparent: true, opacity: 0.50,
+      map: tex, color: 0xff6a1e, transparent: true, opacity: 0.16,
       blending: THREE.AdditiveBlending, depthWrite: false
     }));
-    haloOuter.scale.setScalar(560);
+    haloOuter.scale.setScalar(470);
     sunGroup.add(haloOuter);
 
     const haloMid = new THREE.Sprite(new THREE.SpriteMaterial({
-      map: tex, color: 0xffa949, transparent: true, opacity: 0.85,
+      map: tex, color: 0xffa949, transparent: true, opacity: 0.38,
       blending: THREE.AdditiveBlending, depthWrite: false
     }));
-    haloMid.scale.setScalar(230);
+    haloMid.scale.setScalar(196);
     sunGroup.add(haloMid);
 
     const sunCore = new THREE.Mesh(
-      new THREE.SphereGeometry(13, 24, 24),
-      new THREE.MeshBasicMaterial({ color: 0xfffaf0 })
+      new THREE.SphereGeometry(12, 24, 24),
+      new THREE.MeshBasicMaterial({ color: 0xffab4a })
     );
     sunGroup.add(sunCore);
 
-    // ---------- 尘埃盘 / 小行星带 ----------
     const DUST = 11000;
     const dpos = new Float32Array(DUST * 3);
     const dcol = new Float32Array(DUST * 3);
@@ -573,7 +857,6 @@
       dpos[i * 3 + 1] = (rnd() - 0.5) * 3.0 * (1 - r / 250);
       dpos[i * 3 + 2] = Math.sin(a) * r;
 
-      // 朝向恒星的一侧被照亮
       const heat = Math.pow((Math.cos(a - SUN_ANG) + 1) / 2, 2.0);
       tmpC.copy(cool).lerp(warm, heat);
       const bright = 0.30 + 1.0 * heat;
@@ -593,7 +876,6 @@
     dust.frustumCulled = false;
     systemGroup.add(dust);
 
-    // ---------- 轨道环：有厚度的环面，比 1px 线更有实体感 ----------
     for (let i = 0; i < 46; i++) {
       const r = 26 + Math.pow(i / 45, 0.85) * 208;
       const heat = 1 - Math.pow(i / 45, 0.75);
@@ -613,7 +895,6 @@
       systemGroup.add(ring);
     }
 
-    // ---------- 八大行星 ----------
     const LIST = [
       { name: '水星', r: 34, s: 2.2, c: 0xb0a08c, w: 0.52 },
       { name: '金星', r: 50, s: 3.4, c: 0xf0c874, w: 0.40 },
@@ -682,20 +963,38 @@
   }
 
   // ---------------- 相机 ----------------
+  const _dir = new THREE.Vector3();
+  const _right = new THREE.Vector3();
+  const _look = new THREE.Vector3();
+
   function updateCamera(dt) {
-    const k = 1 - Math.pow(0.001, dt);
+    if (flight) {
+      flight.t += dt;
+      const k = Math.min(1, flight.t / flight.dur);
+      const e = flight.ease(k);
+      orbit.radius = flight.r0 + (flight.r1 - flight.r0) * e;
+      orbit.target.lerpVectors(flight.p0, flight.p1, e);
+      if (k >= 1) flight = null;
+    }
+
+    const k = 1 - Math.pow(0.0006, dt);
     orbit.theta += (orbit.tTheta - orbit.theta) * k;
     orbit.phi += (orbit.tPhi - orbit.phi) * k;
-    orbit.radius += (orbit.tRadius - orbit.radius) * k;
-    orbit.target.lerp(orbit.tTarget, k);
+
+    panelShift = toward(panelShift, panelShiftT, dt, 5.5);
 
     const sp = Math.sin(orbit.phi);
-    camera.position.set(
-      orbit.target.x + orbit.radius * sp * Math.sin(orbit.theta),
-      orbit.target.y + orbit.radius * Math.cos(orbit.phi),
-      orbit.target.z + orbit.radius * sp * Math.cos(orbit.theta)
-    );
-    camera.lookAt(orbit.target);
+    _dir.set(sp * Math.sin(orbit.theta), Math.cos(orbit.phi), sp * Math.cos(orbit.theta));
+
+    camera.position.copy(orbit.target).addScaledVector(_dir, orbit.radius);
+
+    // 鼠标视差：轻微偏移，营造纵深
+    _right.set(_dir.z, 0, -_dir.x).normalize();
+    camera.position.addScaledVector(_right, pointer.x * orbit.radius * 0.035);
+    camera.position.y += pointer.y * orbit.radius * 0.022;
+
+    _look.copy(orbit.target).addScaledVector(_right, panelShift * orbit.radius * 0.30);
+    camera.lookAt(_look);
   }
 
   // ---------------- 交互 ----------------
@@ -705,16 +1004,19 @@
 
     el.addEventListener('pointerdown', function (e) {
       down = true; moved = 0; lx = e.clientX; ly = e.clientY;
+      flight = null;
     });
 
     el.addEventListener('pointerup', function (e) {
+      if (down && moved < 6) pick(e.clientX, e.clientY);
       down = false;
-      if (moved < 6) pick(e.clientX, e.clientY);
     });
 
     el.addEventListener('pointermove', function (e) {
       pointer.x = (e.clientX / innerWidth) * 2 - 1;
       pointer.y = -(e.clientY / innerHeight) * 2 + 1;
+      pointerPx.x = e.clientX; pointerPx.y = e.clientY; pointerPx.moved = true;
+
       if (!down) return;
       const dx = e.clientX - lx, dy = e.clientY - ly;
       moved += Math.abs(dx) + Math.abs(dy);
@@ -723,38 +1025,102 @@
       orbit.tPhi = Math.max(0.16, Math.min(3.0, orbit.tPhi - dy * 0.005));
     });
 
+    el.addEventListener('pointerleave', function () {
+      pointer.x = 0; pointer.y = 0;
+      setHover(null);
+    });
+
     el.addEventListener('wheel', function (e) {
       e.preventDefault();
-      orbit.tRadius = Math.max(18, Math.min(900, orbit.tRadius * (1 + Math.sign(e.deltaY) * 0.12)));
+      flight = null;
+      orbit.radius = Math.max(18, Math.min(900, orbit.radius * (1 + Math.sign(e.deltaY) * 0.12)));
     }, { passive: false });
 
     addEventListener('resize', function () {
       camera.aspect = innerWidth / innerHeight;
       camera.updateProjectionMatrix();
       renderer.setSize(innerWidth, innerHeight);
+      resizePost();
     });
-  }
 
-  function pick(cx, cy) {
-    const nx = (cx / innerWidth) * 2 - 1;
-    const ny = -(cy / innerHeight) * 2 + 1;
-    raycaster.setFromCamera(new THREE.Vector2(nx, ny), camera);
-    const hits = raycaster.intersectObjects(pickables, false);
-    if (!hits.length) return;
+    addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') closePanel();
+      if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+        if (!sessions.length) return;
+        let i = selected ? sessions.indexOf(selected) : -1;
+        i += (e.key === 'ArrowRight' ? 1 : -1);
+        i = (i + sessions.length) % sessions.length;
+        selectSession(sessions[i], null);
+      }
+    });
 
-    const h = hits[0];
-    const ud = h.object.userData || {};
-    const s = sessions.find(function (x) { return x.id === ud.id; });
-    if (!s) return;
-
-    if (ud.kind === 'session') {
-      selectSession(s, null);
-    } else {
-      selectSession(s, h.index);
+    const menuBtn = document.getElementById('menu');
+    const side = document.getElementById('side');
+    if (menuBtn) {
+      menuBtn.onclick = function () {
+        side.classList.toggle('open');
+        menuBtn.classList.toggle('on');
+      };
     }
   }
 
+  function ndc(cx, cy) {
+    return new THREE.Vector2((cx / innerWidth) * 2 - 1, -(cy / innerHeight) * 2 + 1);
+  }
+
+  function pick(cx, cy) {
+    raycaster.setFromCamera(ndc(cx, cy), camera);
+
+    const pts = raycaster.intersectObjects(messagePoints, false);
+    if (pts.length && pts[0].index != null) {
+      const s = byId(pts[0].object.userData.id);
+      if (s) { selectSession(s, pts[0].index); return; }
+    }
+    const hits = raycaster.intersectObjects(hitSpheres, false);
+    if (hits.length) {
+      const s = byId(hits[0].object.userData.id);
+      if (s) selectSession(s, null);
+    }
+  }
+
+  function byId(id) {
+    for (let i = 0; i < sessions.length; i++) if (sessions[i].id === id) return sessions[i];
+    return null;
+  }
+
+  let hoverTick = 0;
+  function updateHover() {
+    if (!pointerPx.moved) return;
+    if (++hoverTick % 2) return;
+    pointerPx.moved = false;
+
+    raycaster.setFromCamera(ndc(pointerPx.x, pointerPx.y), camera);
+    const hits = raycaster.intersectObjects(hitSpheres, false);
+    const s = hits.length ? byId(hits[0].object.userData.id) : null;
+    setHover(s);
+  }
+
+  function setHover(s) {
+    if (s === hovered) return;
+    hovered = s;
+    renderer.domElement.style.cursor = s ? 'pointer' : 'grab';
+    if (s) showLinks(s);
+    else linkObj.visible = false;
+  }
+
+  function closePanel() {
+    document.getElementById('panel').classList.remove('open');
+    selected = null;
+    panelShiftT = 0;
+    refreshOpacity();
+    document.querySelectorAll('.item').forEach(function (el) { el.classList.remove('on'); });
+    let far = 0;
+    sessions.forEach(function (s) { far = Math.max(far, s.pos.length()); });
+    flightTo(new THREE.Vector3(-26, 0, 0), Math.max(140, far * 2.1), 1.0, easeInOutCubic);
+  }
+
   function selectSession(s, msgIndex) {
+    if (!s) return;
     selected = s;
     document.getElementById('panel').classList.add('open');
     document.getElementById('p-proj').textContent = s.project || '';
@@ -766,21 +1132,13 @@
 
     renderMessages(s);
 
-    // 相机飞过去
-    orbit.tTarget.copy(s.pos);
+    // 缓动飞过去
     const r = RING_R0 + s.msgCount * RING_DR;
-    orbit.tRadius = Math.max(30, r * 2.6);
+    flightTo(s.pos, Math.max(30, r * 2.6), 1.15, easeInOutCubic);
+    panelShiftT = 1;
 
-    // 高亮
-    sessions.forEach(function (o) {
-      const on = o === s;
-      o.obj.glow.material.opacity = on ? 1.0 : 0.42;
-      o.obj.points.material.opacity = on ? 1.0 : 0.38;
-      o.obj.label.material.opacity = on ? 1.0 : 0.55;
-      o.obj.ring.material.opacity = on ? 0.34 : 0.10;
-    });
+    refreshOpacity();
 
-    // 左侧列表同步
     document.querySelectorAll('.item').forEach(function (el) {
       el.classList.toggle('on', el.dataset.id === s.id);
     });
@@ -790,9 +1148,31 @@
       const target = box.querySelector('[data-i="' + msgIndex + '"]');
       if (target) {
         target.classList.add('hl');
-        target.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        setTimeout(function () {
+          target.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        }, 60);
       }
     }
+  }
+
+  // 根据「选中 + 搜索」统一算透明度目标，淡入淡出全部交给逐帧逼近
+  let searchKey = '';
+  function refreshOpacity() {
+    sessions.forEach(function (s) {
+      const on = s === selected;
+      const hit = !searchKey ||
+        s.title.toLowerCase().indexOf(searchKey) >= 0 ||
+        s.messages.some(function (m) { return m.text.toLowerCase().indexOf(searchKey) >= 0; });
+
+      if (!hit) {
+        s.op.glow = 0.10; s.op.points = 0.07; s.op.label = 0.14; s.op.ring = 0.04;
+        return;
+      }
+      s.op.glow = on ? 1.0 : 0.85;
+      s.op.points = on ? 1.0 : 0.95;
+      s.op.label = on ? 1.0 : (selected ? 0.6 : 0.92);
+      s.op.ring = on ? 0.34 : 0.16;
+    });
   }
 
   function renderMessages(s) {
@@ -803,6 +1183,7 @@
       const d = document.createElement('div');
       d.className = 'msg ' + (m.role === 'user' ? 'u' : 'a');
       d.dataset.i = i;
+      d.style.setProperty('--d', Math.min(420, i * 16) + 'ms');
 
       const who = document.createElement('div');
       who.className = 'who';
@@ -877,54 +1258,127 @@
   function initSearch() {
     const q = document.getElementById('q');
     q.addEventListener('input', function () {
-      const kw = q.value.trim().toLowerCase();
-      let firstHit = null;
+      searchKey = q.value.trim().toLowerCase();
+      refreshOpacity();
 
       sessions.forEach(function (s) {
-        const hit = !kw ||
-          s.title.toLowerCase().indexOf(kw) >= 0 ||
-          s.messages.some(function (m) { return m.text.toLowerCase().indexOf(kw) >= 0; });
-        s.obj.glow.material.opacity = hit ? (selected === s ? 1 : 0.85) : 0.10;
-        s.obj.points.material.opacity = hit ? 0.95 : 0.08;
-        s.obj.label.material.opacity = hit ? 0.92 : 0.18;
-        if (hit && !firstHit) firstHit = s;
-      });
-
-      document.querySelectorAll('.item').forEach(function (el) {
-        const s = sessions.find(function (x) { return x.id === el.dataset.id; });
-        const hit = !kw ||
-          s.title.toLowerCase().indexOf(kw) >= 0 ||
-          s.messages.some(function (m) { return m.text.toLowerCase().indexOf(kw) >= 0; });
-        el.style.opacity = hit ? 1 : 0.28;
+        const hit = !searchKey ||
+          s.title.toLowerCase().indexOf(searchKey) >= 0 ||
+          s.messages.some(function (m) { return m.text.toLowerCase().indexOf(searchKey) >= 0; });
+        const el = document.querySelector('.item[data-id="' + s.id + '"]');
+        if (el) el.style.opacity = hit ? 1 : 0.26;
       });
     });
   }
 
-  // ---------------- 渲染循环 ----------------
-  let last = performance.now();
-  function tick() {
-    requestAnimationFrame(tick);
-    const now = performance.now();
-    const dt = Math.min(0.05, (now - last) / 1000);
-    last = now;
-
-    updateCamera(dt);
-    updateMeteors(dt);
-    updateSolarSystem(dt);
-
-    // 星体自转，尘埃缓缓旋动
+  // ---------------- 每帧更新 ----------------
+  function updateStars(dt) {
     sessions.forEach(function (s, i) {
-      s.obj.group.rotation.y += dt * (0.045 + i * 0.004);
-      s.obj.glow.material.rotation += dt * 0.1;
-      const pulse = 1 + Math.sin(now * 0.0016 + i) * 0.035;
-      s.obj.glow.scale.setScalar(s.obj.glow.scale.x * 0.98 + (14 + Math.min(26, s.msgCount / 22)) * pulse * 0.02);
+      const o = s.op;
 
-      // 标签恒定屏幕大小，远近都读得清
+      s.obj.glow.material.opacity = toward(s.obj.glow.material.opacity, o.glow, dt, 7);
+      s.obj.points.material.opacity = toward(s.obj.points.material.opacity, o.points, dt, 7);
+      s.obj.label.material.opacity = toward(s.obj.label.material.opacity, o.label, dt, 7);
+      s.obj.ring.material.opacity = toward(s.obj.ring.material.opacity, o.ring, dt, 7);
+
+      s.obj.group.rotation.y += dt * (0.045 + i * 0.004);
+
+      const hover = hovered === s ? 1.45 : 1;
+      const pulse = 1 + Math.sin(clock * 0.0016 + i * 1.3) * 0.045;
+      s.obj.scale = toward(s.obj.scale, s.obj.baseGlow * hover * pulse, dt, 6);
+      s.obj.glow.scale.setScalar(s.obj.scale);
+      s.obj.glow.material.rotation += dt * 0.1;
+
       const d = camera.position.distanceTo(s.obj.group.position);
       const sc = Math.max(2.0, Math.min(16, d * 0.032));
       s.obj.label.scale.set(sc * s.obj.aspect, sc, 1);
-      s.obj.label.position.y = sc * 1.25;
+      // 屏幕像素 -> 世界单位，用来把打架的标签往上顶
+      const worldPerPx = (2 * d * Math.tan(camera.fov * Math.PI / 360)) / innerHeight;
+      s.obj.liftCur = toward(s.obj.liftCur || 0, s.obj.liftT || 0, dt, 9);
+      s.obj.label.position.y = sc * 1.25 + s.obj.liftCur * worldPerPx;
     });
+
+    if (linkObj && linkObj.visible) {
+      linkOpacity = toward(linkMat.opacity, hovered ? 0.30 : 0, dt, 8);
+      linkMat.opacity = linkOpacity;
+      if (linkOpacity < 0.01 && !hovered) linkObj.visible = false;
+    }
+  }
+
+  // 标签防重叠：屏幕空间里简单堆叠，被压住的往上挪
+  const _pv = new THREE.Vector3();
+  const _scr = [];
+  let declutterTick = 0;
+
+  function declutterLabels() {
+    _scr.length = 0;
+    for (let i = 0; i < sessions.length; i++) {
+      const s = sessions[i];
+      _pv.copy(s.obj.group.position).project(camera);
+      if (_pv.z > 1) continue;
+      _scr.push({
+        x: (_pv.x * 0.5 + 0.5) * innerWidth,
+        y: (-_pv.y * 0.5 + 0.5) * innerHeight,
+        s: s
+      });
+    }
+    _scr.sort(function (a, b) { return a.y - b.y; });
+    const placed = [];
+    for (let i = 0; i < _scr.length; i++) {
+      const p = _scr[i];
+      const w = Math.max(64, p.s.obj.aspect * 26);
+      let lift = 0, guard = 0;
+      while (guard++ < 8) {
+        let hit = false;
+        for (let j = 0; j < placed.length; j++) {
+          const q = placed[j];
+          if (Math.abs(p.x - q.x) < (w + q.w) * 0.5 &&
+              Math.abs((p.y - lift) - q.y) < 30) { hit = true; break; }
+        }
+        if (!hit) break;
+        lift += 30;
+      }
+      p.w = w;
+      placed.push(p);
+      p.s.obj.liftT = lift;
+    }
+  }
+
+  function step(dt) {
+    clock += dt * 1000;
+    updateCamera(dt);
+    updateHover();
+    if (++declutterTick % 8 === 1) declutterLabels();
+    updateStars(dt);
+    updateMeteors(dt);
+    updateSolarSystem(dt);
+
+    if (starfield) starfield.rotation.y += dt * 0.004;
+    for (let i = 0; i < nebulas.length; i++) {
+      nebulas[i].material.opacity = 0.26 + Math.sin(clock * 0.0004 + i * 2) * 0.05;
+    }
+  }
+
+  // ---------------- 渲染循环 ----------------
+  let last = 0;
+  let slow = 0;
+
+  function tick() {
+    requestAnimationFrame(tick);
+    const now = performance.now();
+    const dt = Math.min(0.05, (now - last) / 1000 || 0.016);
+    last = now;
+
+    step(dt);
+
+    // 性能兜底：连续卡顿就关掉泛光
+    if (post.on) {
+      slow = dt > 0.042 ? slow + 1 : Math.max(0, slow - 2);
+      if (slow > 90) {
+        disposePost();
+        slow = 0;
+      }
+    }
 
     if (DEBUG) {
       let fly = 0, vis = 0;
@@ -936,11 +1390,35 @@
           if (Math.abs(wp.x) < 1 && Math.abs(wp.y) < 1 && wp.z < 1) vis++;
         }
       }
-      document.title = 'METEOR fly=' + fly + ' inView=' + vis + ' op=' +
-        (meteors[0] ? meteors[0].head.material.opacity.toFixed(2) : 'na');
+      document.title = 'bloom=' + (post.on ? 1 : 0) + ' hover=' + (hovered ? hovered.title : '-') +
+        ' fly=' + fly + ' inView=' + vis;
     }
 
-    renderer.render(scene, camera);
+    renderFrame();
+  }
+
+  // ---------------- 开场 ----------------
+  function bootDone(ctx) {
+    const b = document.getElementById('boot');
+    document.body.classList.add('ready');
+
+    if (!USE_BOOT || WARM > 0) {
+      if (b) b.remove();
+      startIntro(false);
+      return;
+    }
+    // 等场景第一帧出来，再放跃迁
+    setTimeout(function () {
+      if (b) { b.classList.add('done'); setTimeout(function () { b.remove(); }, 1000); }
+      startIntro(true);
+    }, 240 + Math.floor(ctx || 0));
+  }
+
+  function startIntro(animate) {
+    if (!animate) return;
+    const target = orbit.radius;
+    orbit.radius = target * 2.4;
+    flightTo(orbit.target.clone(), target, 1.9, easeOutQuint);
   }
 
   // ---------------- 启动 ----------------
@@ -976,19 +1454,7 @@
       initInteraction();
       initSearch();
 
-      document.getElementById('close').onclick = function () {
-        document.getElementById('panel').classList.remove('open');
-        selected = null;
-        sessions.forEach(function (o) {
-          o.obj.glow.material.opacity = 0.85;
-          o.obj.points.material.opacity = 0.95;
-          o.obj.label.material.opacity = 0.92;
-          o.obj.ring.material.opacity = 0.16;
-        });
-        orbit.tTarget.set(-26, 0, 0);
-        orbit.tRadius = Math.max(140, far * 2.1);
-        document.querySelectorAll('.item').forEach(function (el) { el.classList.remove('on'); });
-      };
+      document.getElementById('close').onclick = closePanel;
 
       // 开局：全景视角，把全部星辰框进画面
       let far = 0;
@@ -996,25 +1462,33 @@
         const r = RING_R0 + s.msgCount * RING_DR;
         far = Math.max(far, s.pos.length() + r);
       });
-      orbit.tRadius = Math.max(140, far * 2.1);
-      orbit.radius = orbit.tRadius;
+      orbit.radius = Math.max(140, far * 2.1);
       orbit.target.set(-26, 0, 0);
-      orbit.tTarget.set(-26, 0, 0);
-      const fi = new URLSearchParams(location.search).get("focus");
-      if (fi !== null && sessions[+fi]) selectSession(sessions[+fi], null);
+      orbit.tTheta = 0.9;
+      orbit.tPhi = 1.12;
+      orbit.theta = 0.9;
+      orbit.phi = 1.12;
+
+      const fi = QS.get('focus');
+      const focusS = fi !== null ? sessions[+fi] : null;
 
       if (WARM > 0) {
         const steps = Math.min(3600, Math.round(WARM * 60));
-        for (let k = 0; k < steps; k++) {
-          updateCamera(1 / 60);
-          updateMeteors(1 / 60);
-          updateSolarSystem(1 / 60);
-        }
+        for (let k = 0; k < steps; k++) step(1 / 60);
       }
 
+      last = performance.now();
       tick();
+      bootDone(0);
+
+      if (focusS) {
+        // 等跃迁结束再飞过去
+        setTimeout(function () { selectSession(focusS, null); }, WARM > 0 ? 0 : 900);
+      }
     })
     .catch(function (e) {
+      const b = document.getElementById('boot');
+      if (b) b.remove();
       document.body.innerHTML =
         '<pre style="color:#f88;padding:40px;font-size:13px">' + (e && e.stack || e) + '</pre>';
     });
