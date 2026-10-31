@@ -106,7 +106,7 @@ canvas:active{cursor:grabbing;}
 .panel .glow-edge{position:absolute;top:0;left:-1px;width:1px;height:100%;
   background:linear-gradient(180deg,transparent,rgba(79,216,255,.75),rgba(255,176,86,.45),transparent);
   box-shadow:0 0 18px rgba(79,216,255,.45);opacity:.9;}
-.panel .head{position:relative;padding:22px 24px 15px;border-bottom:1px solid var(--line);}
+.panel .head{position:relative;padding:22px 56px 15px 24px;border-bottom:1px solid var(--line);}
 .panel .head::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:1px;
   background:linear-gradient(90deg,rgba(79,216,255,.7),transparent 70%);}
 .panel .head .proj{font-size:11px;color:var(--accent);letter-spacing:1px;opacity:.9;
@@ -114,6 +114,7 @@ canvas:active{cursor:grabbing;}
 .panel .head h2{margin:7px 0 0;font-size:16.5px;font-weight:600;line-height:1.42;}
 .panel .head .meta{margin-top:9px;font-size:11.5px;color:#6f88a4;letter-spacing:.2px;}
 .panel .close{position:absolute;top:17px;right:19px;width:27px;height:27px;border:0;
+  z-index:3;
   border-radius:8px;background:rgba(255,255,255,.06);color:#9fb6d0;font-size:15px;
   cursor:pointer;line-height:1;transition:.25s var(--spring);}
 .panel .close:hover{background:rgba(255,255,255,.14);color:#fff;transform:rotate(90deg);}
@@ -1916,6 +1917,40 @@ canvas:active{cursor:grabbing;}
       initSearch();
 
       document.getElementById('close').onclick = closePanel;
+
+      // 自检：模拟「选中会话 → 点右上角 ×」，并报告 × 位置上最顶层的元素是谁
+      if (QS.get('selftest') === '1') {
+        setTimeout(function () {
+          let flow = 'n/a', top = 'n/a', err = '';
+          try {
+            selectSession(sessions[0]);
+            flow = document.getElementById('panel').classList.contains('open') ? 'opened' : 'not-open';
+            // headless 虚拟时间下 CSS transition 不推进，这里直接关掉过渡，量到最终位置
+            const pn = document.getElementById('panel');
+            pn.style.transition = 'none';
+            pn.classList.add('open');
+            void pn.offsetWidth;
+            setTimeout(function () {
+              let top2 = 'n/a', after = '';
+              try {
+                const cb = document.getElementById('close');
+                const r = cb.getBoundingClientRect();
+                const el = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+                top2 = el ? (el.id || el.className || el.tagName) : 'none';
+                const hit = (el === cb) || (el && el.contains && el.contains(cb));
+                after = 'rect=' + [r.left, r.top, r.width, r.height].map(Math.round).join(',') +
+                  ' hit=' + (hit ? 'yes' : 'no') +
+                  ' panel=' + (function () { const p = document.getElementById('panel').getBoundingClientRect(); return [p.left, p.width].map(Math.round).join(','); })() +
+                  ' parent=' + (cb.offsetParent ? (cb.offsetParent.id || cb.offsetParent.className) : 'null') +
+                  ' innerW=' + innerWidth;
+                cb.click();
+                after += ' state=' + (document.getElementById('panel').classList.contains('open') ? 'still-open' : 'closed');
+              } catch (e2) { after = 'ERR ' + String((e2 && e2.message) || e2); }
+              document.title = 'TEST ' + JSON.stringify({ flow: flow, topAt: String(top2), after: after, err: err });
+            }, 900);
+          } catch (e) { err = String((e && e.message) || e); document.title = 'TEST ' + JSON.stringify({ flow: flow, topAt: top, after: '', err: err }); }
+        }, 700);
+      }
 
       // 背景图：?bg=<url> 优先，其次同目录 bg.jpg；单文件版可用 window.MEMORY_BG 内联
       (function () {

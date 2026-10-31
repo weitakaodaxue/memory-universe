@@ -1677,6 +1677,40 @@
 
       document.getElementById('close').onclick = closePanel;
 
+      // 自检：模拟「选中会话 → 点右上角 ×」，并报告 × 位置上最顶层的元素是谁
+      if (QS.get('selftest') === '1') {
+        setTimeout(function () {
+          let flow = 'n/a', top = 'n/a', err = '';
+          try {
+            selectSession(sessions[0]);
+            flow = document.getElementById('panel').classList.contains('open') ? 'opened' : 'not-open';
+            // headless 虚拟时间下 CSS transition 不推进，这里直接关掉过渡，量到最终位置
+            const pn = document.getElementById('panel');
+            pn.style.transition = 'none';
+            pn.classList.add('open');
+            void pn.offsetWidth;
+            setTimeout(function () {
+              let top2 = 'n/a', after = '';
+              try {
+                const cb = document.getElementById('close');
+                const r = cb.getBoundingClientRect();
+                const el = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+                top2 = el ? (el.id || el.className || el.tagName) : 'none';
+                const hit = (el === cb) || (el && el.contains && el.contains(cb));
+                after = 'rect=' + [r.left, r.top, r.width, r.height].map(Math.round).join(',') +
+                  ' hit=' + (hit ? 'yes' : 'no') +
+                  ' panel=' + (function () { const p = document.getElementById('panel').getBoundingClientRect(); return [p.left, p.width].map(Math.round).join(','); })() +
+                  ' parent=' + (cb.offsetParent ? (cb.offsetParent.id || cb.offsetParent.className) : 'null') +
+                  ' innerW=' + innerWidth;
+                cb.click();
+                after += ' state=' + (document.getElementById('panel').classList.contains('open') ? 'still-open' : 'closed');
+              } catch (e2) { after = 'ERR ' + String((e2 && e2.message) || e2); }
+              document.title = 'TEST ' + JSON.stringify({ flow: flow, topAt: String(top2), after: after, err: err });
+            }, 900);
+          } catch (e) { err = String((e && e.message) || e); document.title = 'TEST ' + JSON.stringify({ flow: flow, topAt: top, after: '', err: err }); }
+        }, 700);
+      }
+
       // 背景图：?bg=<url> 优先，其次同目录 bg.jpg；单文件版可用 window.MEMORY_BG 内联
       (function () {
         const b = document.getElementById('bg');

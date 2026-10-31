@@ -96,7 +96,7 @@ canvas:active{cursor:grabbing;}
 .panel .glow-edge{position:absolute;top:0;left:-1px;width:1px;height:100%;
   background:linear-gradient(180deg,transparent,rgba(79,216,255,.75),rgba(255,176,86,.45),transparent);
   box-shadow:0 0 18px rgba(79,216,255,.45);opacity:.9;}
-.panel .head{position:relative;padding:22px 24px 15px;border-bottom:1px solid var(--line);}
+.panel .head{position:relative;padding:22px 56px 15px 24px;border-bottom:1px solid var(--line);}
 .panel .head::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:1px;
   background:linear-gradient(90deg,rgba(79,216,255,.7),transparent 70%);}
 .panel .head .proj{font-size:11px;color:var(--accent);letter-spacing:1px;opacity:.9;
@@ -104,6 +104,7 @@ canvas:active{cursor:grabbing;}
 .panel .head h2{margin:7px 0 0;font-size:16.5px;font-weight:600;line-height:1.42;}
 .panel .head .meta{margin-top:9px;font-size:11.5px;color:#6f88a4;letter-spacing:.2px;}
 .panel .close{position:absolute;top:17px;right:19px;width:27px;height:27px;border:0;
+  z-index:3;
   border-radius:8px;background:rgba(255,255,255,.06);color:#9fb6d0;font-size:15px;
   cursor:pointer;line-height:1;transition:.25s var(--spring);}
 .panel .close:hover{background:rgba(255,255,255,.14);color:#fff;transform:rotate(90deg);}
