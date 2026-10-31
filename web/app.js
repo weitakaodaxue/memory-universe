@@ -5,6 +5,7 @@
    ?bloom=0   关闭后期泛光        ?swirl=0   关闭星系漩涡
    ?boot=0    跳过开场动画        ?warm=4    动画预演 4 秒
    ?focus=3   开局聚焦第 4 个会话  ?debug=1   调试信息写进标题
+   ?flow=0.8  背景流动星云强度（0 = 关闭，默认 1.0）
    ========================================================= */
 (function () {
   'use strict';
@@ -30,6 +31,9 @@
   const USE_BLOOM = flag('bloom', true);
   const USE_SWIRL = flag('swirl', true);
   const USE_BOOT = flag('boot', true);
+  // 背景流动星云强度；?flow=0 关掉，?flow=1.6 加强
+  const FLOW = QS.has('flow') ? Math.max(0, parseFloat(QS.get('flow')) || 0) : 1.0;
+  const _flowDir = new THREE.Vector3();
 
   // ---------------- 全局状态 ----------------
   let scene, camera, renderer, raycaster;
@@ -407,18 +411,48 @@
         strength: { value: 0.42 },
         vig: { value: 0.34 },
         uTime: { value: 0 },
-        grain: { value: 0.030 }
+        grain: { value: 0.030 },
+        uFlow: { value: FLOW },
+        uCam: { value: new THREE.Vector2(0, 0) }   // 视角方向 xy，用于背景视差
       },
       vertexShader: VERT,
       fragmentShader: [
         'uniform sampler2D tScene; uniform sampler2D tBloom;',
         'uniform float strength; uniform float vig; uniform float uTime; uniform float grain;',
+        'uniform float uFlow; uniform vec2 uCam;',
         'varying vec2 vUv;',
         'float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }',
+        // 值噪声 + 3 阶 fbm：给背景星云用，比纹理便宜、不用额外 RT
+        'float n21(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }',
+        'float vnoise(vec2 p){',
+        '  vec2 i = floor(p), f = fract(p);',
+        '  f = f * f * (3.0 - 2.0 * f);',
+        '  return mix(mix(n21(i), n21(i + vec2(1.0, 0.0)), f.x),',
+        '             mix(n21(i + vec2(0.0, 1.0)), n21(i + vec2(1.0, 1.0)), f.x), f.y);',
+        '}',
+        'float fbm(vec2 p){',
+        '  float s = 0.0, a = 0.5;',
+        '  for (int i = 0; i < 3; i++) { s += a * vnoise(p); p = p * 2.07 + 11.3; a *= 0.5; }',
+        '  return s;',
+        '}',
         'void main(){',
         '  vec3 col = texture2D(tScene, vUv).rgb;',
         '  vec3 bloom = texture2D(tBloom, vUv).rgb;',
         '  col += bloom * strength;',
+        // 流动星云：双层域扭曲，极慢漂移 + 轻微视差；在 ACES 之前叠加，
+        // 这样会被压进高光范围，不会在暗角里糊成一片死紫。
+        '  if (uFlow > 0.001) {',
+        '    vec2 fp = vUv * vec2(2.2, 3.0) + uCam;',
+        '    vec2 warp = vec2(fbm(fp + vec2(uTime * 0.020, uTime * 0.006)),',
+        '                     fbm(fp + vec2(4.7, -uTime * 0.014)));',
+        '    float cloud = fbm(fp * 1.5 + warp * 1.1 + vec2(-uTime * 0.030, uTime * 0.011));',
+        '    float band = smoothstep(0.30, 0.92, cloud);',
+        '    float lift = smoothstep(0.15, 0.95, cloud * 0.7 + warp.x * 0.3);',
+        '    vec3 flow = mix(vec3(0.010, 0.006, 0.030), vec3(0.105, 0.048, 0.245), band);',
+        '    flow = mix(flow, vec3(0.170, 0.045, 0.210), smoothstep(0.55, 0.90, warp.y) * 0.40);',
+        '    flow *= (0.85 + 0.15 * vUv.y) * (0.45 + 0.75 * lift);',
+        '    col += flow * uFlow;',
+        '  }',
         '  col = (col * (2.51 * col + 0.03)) / (col * (2.43 * col + 0.59) + 0.14);', // ACES 近似
         '  col = pow(max(col, 0.0), vec3(0.4545));',      // 线性→sRGB，缺这步整屏会偏暗偏灰
         // 胶片颗粒：在最终色彩空间里加一点点亮度噪声，去掉 3D 引擎的塑料感
@@ -1918,7 +1952,12 @@
       nebulas[i].material.opacity = 0.26 + Math.sin(clock * 0.0004 + i * 2) * 0.05;
     }
     const tsec = clock * 0.001;
-    if (post.comp) post.comp.uniforms.uTime.value = tsec;
+    if (post.comp) {
+      post.comp.uniforms.uTime.value = tsec;
+      // 背景视差：直接用视线方向 xy，连续无接缝（不用 atan2，避免 ±π 跳变）
+      _flowDir.set(0, 0, -1).applyQuaternion(camera.quaternion);
+      post.comp.uniforms.uCam.value.set(_flowDir.x * 1.1, _flowDir.y * 1.1);
+    }
     if (galaxyPts && galaxyPts.material.uniforms) galaxyPts.material.uniforms.uTime.value = tsec;
     if (dustPts && dustPts.material.uniforms) dustPts.material.uniforms.uTime.value = tsec;
   }
