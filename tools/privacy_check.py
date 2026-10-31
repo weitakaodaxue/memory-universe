@@ -13,6 +13,7 @@ Exits with status 1 when anything matches, so it can gate a commit hook or CI.
 import argparse
 import os
 import re
+import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -38,11 +39,33 @@ def iter_files(root):
                 yield path
 
 
+def tracked_files(root):
+    """Only the files that actually go to GitHub. Local data dumps such as
+    web/memory.json and the personal single-file build are gitignored on
+    purpose, so auditing them produces false alarms ("you are about to
+    publish your own conversations") when nothing is published at all."""
+    try:
+        out = subprocess.check_output(
+            ["git", "ls-files", "-z"], cwd=root, stderr=subprocess.DEVNULL)
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    files = [f for f in out.decode("utf-8", "replace").split("\0") if f]
+    keep = []
+    for rel in files:
+        if os.path.splitext(rel)[1].lower() in TEXT_EXT:
+            if any(part in SKIP_DIRS for part in rel.split("/")):
+                continue
+            keep.append(os.path.join(root, rel.replace("/", os.sep)))
+    return keep
+
+
 def main():
     ap = argparse.ArgumentParser(description="Find private data before publishing")
     ap.add_argument("--token", action="append", default=[], help="extra literal string to look for")
     ap.add_argument("--tokens-file", help="file with one token per line")
     ap.add_argument("--include-vendor", action="store_true", help="also scan web/vendor")
+    ap.add_argument("--all", action="store_true",
+                    help="scan the whole working tree, including gitignored local data")
     args = ap.parse_args()
 
     tokens = list(args.token)
@@ -56,7 +79,13 @@ def main():
 
     hits = 0
     scanned = 0
-    for path in iter_files(ROOT):
+    files = None if args.all else tracked_files(ROOT)
+    if files is None:
+        files = iter_files(ROOT)
+        scope = "working-tree files"
+    else:
+        scope = "tracked files"
+    for path in files:
         rel = os.path.relpath(path, ROOT)
         try:
             with open(path, "r", encoding="utf-8", errors="replace") as f:
@@ -78,7 +107,7 @@ def main():
                     print("%s:%d  [%s]" % (rel, lineno, ", ".join(sorted(set(problems)))))
                     print("    " + line.strip()[:160])
 
-    print("\nscanned %d files, %d matching lines" % (scanned, hits))
+    print("\nscanned %d %s, %d matching lines" % (scanned, scope, hits))
     if hits:
         print("review the lines above before publishing")
         return 1

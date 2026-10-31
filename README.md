@@ -177,6 +177,10 @@ memory-universe/
 python tools/privacy_check.py --token 你的名字 --token 你的公司
 ```
 
+默认只扫 **git 跟踪的文件**——也就是真正会发上 GitHub 的那些，所以本地留着的
+`web/memory.json`、个人单文件版不会造成误报；想连本地数据一起查用 `--all`
+（那些命中是预期的，别提交就行）。
+
 CI 里挂了同样的检查（`.github/workflows/privacy.yml`），并且会拦住误提交的 `web/memory.json`。
 
 ## 可以继续做的方向
