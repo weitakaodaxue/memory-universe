@@ -29,18 +29,61 @@ except ImportError:  # pragma: no cover
 DEFAULT_DSH_HOME = os.environ.get("DSH_HOME", os.path.join("~", ".dsh"))
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
-# Event types we ignore when looking for a session's visible text.
-SKIP_SOURCES = ("user", None)
+# user/message events are also used by DSH itself for injected pseudo-messages
+# (title generation, memory recall, ...). Their source.kind is something other
+# than "user"/None, so we keep only these two and drop the rest.
+ALLOWED_SOURCES = ("user", None)
 
 
 def decode_project(dirname):
-    """--D-myproj-- (DSH's escaped cwd) -> a readable path."""
-    s = dirname.strip("-")
-    s = s.replace("~2018", "'")          # DSH escapes punctuation as ~<code>
-    s = s.replace("--", "\x00").replace("-", "\\").replace("\x00", "\\")
-    if s and s[0] != "\\":
-        s = "\\" + s
-    return s
+    """--D-myproj-- (DSH's escaped cwd) -> a readable path.
+
+    DSH escapes a cwd into a directory name: "-" separates path segments and a
+    literal character is written as "~<hex codepoint>" (e.g. ~2018 -> ').  The
+    result is only a readable *label* -- the real cwd is stored inside the
+    session file, so callers prefer that when it is available.
+    """
+    s = dirname
+    if s.startswith("--"):
+        s = s[2:]
+    if s.endswith("--"):
+        s = s[:-2]
+
+    sep = "\\" if os.name == "nt" else "/"
+    # "--" and a leading/trailing "-" both collapse into empty segments
+    parts = [unescape_segment(p) for p in s.split("-") if p]
+    joined = sep.join(parts)
+    if os.name == "nt" and joined and not joined.startswith("\\"):
+        joined = "\\" + joined
+    elif os.name != "nt" and joined and not joined.startswith("/"):
+        joined = "/" + joined
+    return joined
+
+
+# DSH writes an escaped char as "~" + 4 hex digits of its code point.  For a
+# readable label, typographic punctuation is folded back to ASCII.
+_TYPO = {
+    0x2018: "'", 0x2019: "'", 0x201C: '"', 0x201D: '"',
+    0x2013: "-", 0x2014: "-", 0x2026: "...", 0x00A0: " ",
+}
+
+
+def unescape_segment(part):
+    """my~002dname -> my-name, it~2018s -> it's."""
+    out = []
+    i = 0
+    n = len(part)
+    while i < n:
+        if part[i] == "~" and i + 5 <= n:
+            hexpart = part[i + 1:i + 5]
+            if all(c in "0123456789abcdefABCDEF" for c in hexpart):
+                code = int(hexpart, 16)
+                out.append(_TYPO.get(code, chr(code)))
+                i += 5
+                continue
+        out.append(part[i])
+        i += 1
+    return "".join(out)
 
 
 def mask_path(path, home):
@@ -51,9 +94,20 @@ def mask_path(path, home):
         home = os.path.abspath(os.path.expanduser(home))
     except Exception:
         return path
-    for prefix in (home, home.replace("\\", "/")):
-        if path.startswith(prefix):
-            return "~" + path[len(prefix):]
+
+    # Windows paths are case-insensitive: compare on normcase() so a lowercase
+    # drive letter from cwd still gets masked.
+    target = os.path.normcase(path)
+    variants = (home, home.replace("\\", "/"), home.replace("/", "\\"))
+    for variant in variants:
+        prefix = os.path.normcase(variant)
+        if not prefix or not target.startswith(prefix):
+            continue
+        rest = path[len(variant):]
+        # only mask a real boundary (~\foo, not ~\foobar) unless it is exact
+        if rest and rest[0] not in ("\\", "/"):
+            continue
+        return "~" + rest
     return path
 
 
@@ -109,7 +163,7 @@ def read_session(path, max_text=4000, home=None):
             d = o.get("data") or {}
             src = (d.get("source") or {}).get("kind")
             # Skip injected pseudo-user messages (title generation, memory, ...)
-            if src not in SKIP_SOURCES:
+            if src not in ALLOWED_SOURCES:
                 continue
             txt = text_of(d.get("content"))
             if txt:

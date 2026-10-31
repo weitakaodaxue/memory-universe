@@ -60,9 +60,12 @@ def main():
 
     safe_three = three.replace("</script", "<\\/script")
     safe_app = app.replace("</script", "<\\/script")
+    # Same escape for CSS: a "</style" anywhere (base64 SVG, a comment) would
+    # close the inline <style> block early.
+    safe_css = css.replace("</style", "<\\/style")
 
     html = html.replace('<link rel="stylesheet" href="style.css">',
-                        "<style>\n" + css + "\n</style>")
+                        "<style>\n" + safe_css + "\n</style>")
     html = html.replace('<script src="vendor/three.min.js"></script>',
                         "<script>\n" + safe_three + "\n</script>")
     html = html.replace('<script src="app.js"></script>',

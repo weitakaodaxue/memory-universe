@@ -29,6 +29,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             super().log_message(fmt, *args)
 
 
+class ReusableTCPServer(socketserver.TCPServer):
+    """Restarting right after Ctrl+C hits TIME_WAIT -> Errno 98 without this."""
+    allow_reuse_address = True
+
+
 def main():
     ap = argparse.ArgumentParser(description="Serve the memory universe locally")
     ap.add_argument("--port", type=int, default=8099)
@@ -40,7 +45,7 @@ def main():
         raise SystemExit("web/ not found next to serve.py")
 
     handler = functools.partial(Handler, directory=WEB)
-    with socketserver.TCPServer((args.host, args.port), handler) as httpd:
+    with ReusableTCPServer((args.host, args.port), handler) as httpd:
         url = "http://%s:%d/" % (args.host, args.port)
         print("memory universe -> %s   (Ctrl+C to stop)" % url)
         if not args.no_browser:
