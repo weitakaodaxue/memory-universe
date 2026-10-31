@@ -1084,21 +1084,47 @@ canvas{cursor:none;}
   }
 
   // ---------------- 悬停连线 ----------------
+  // 每根连线画一条朝相机的带状面片（不是 1px 线）：
+  // 宽度按屏幕像素算，两端收细、中段最宽，横截面用高斯核当发光核心。
+  // 关键：depthTest 关掉 —— 星系尘埃会写深度，开着的话整条光纤被挡掉大半。
   let linkObj = null, linkMat = null, linkGeo = null;
   let linkOpacity = 0;
+  let linkPick = [];        // 本次实际连到的邻居（自检/调试用）
 
-  // 每根连线画 3 股，抵消 WebGL 只有 1px 线宽的观感（看着才像发光纤维）
-  const LINK_STRANDS = 3;
+  const LINK_RIBBON = 7;            // 沿线横截面数
+  const LINK_SEG = LINK_RIBBON - 1;
   const LINK_MAX = 3;
+  const LINK_VPL = LINK_RIBBON * 2; // 单条链路的顶点数
 
   function buildLinks() {
+    const total = LINK_MAX * LINK_VPL;
+    const pos = new Float32Array(total * 3);
+    const prg = new Float32Array(total);
+    const sid = new Float32Array(total);
+    const idx = [];
+    for (let l = 0; l < LINK_MAX; l++) {
+      const base = l * LINK_VPL;
+      for (let i = 0; i < LINK_SEG; i++) {
+        const v = base + i * 2;
+        idx.push(v, v + 1, v + 2, v + 1, v + 3, v + 2);
+      }
+    }
+    for (let l = 0; l < LINK_MAX; l++) {
+      for (let i = 0; i < LINK_RIBBON; i++) {
+        const k = l * LINK_VPL + i * 2;
+        prg[k] = prg[k + 1] = i / LINK_SEG;
+        sid[k] = -1; sid[k + 1] = 1;
+      }
+    }
     linkGeo = new THREE.BufferGeometry();
-    const verts = LINK_MAX * LINK_STRANDS * 2;
-    linkGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(verts * 3), 3));
-    linkGeo.setAttribute('aProg', new THREE.BufferAttribute(new Float32Array(verts), 1));
-    // 流光光纤：沿线跑的光斑由 aProg + uTime 算，不用贴图
+    linkGeo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    linkGeo.setAttribute('aProg', new THREE.BufferAttribute(prg, 1));
+    linkGeo.setAttribute('aSide', new THREE.BufferAttribute(sid, 1));
+    linkGeo.setIndex(idx);
+    // 流光光纤：沿线跑的能量包由 aProg + uTime 算，不用贴图
     linkMat = new THREE.ShaderMaterial({
-      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+      transparent: true, depthWrite: false, depthTest: false,
+      side: THREE.DoubleSide, blending: THREE.AdditiveBlending,
       uniforms: {
         uTime: { value: 0 },
         uOpacity: { value: 0 },
@@ -1106,66 +1132,105 @@ canvas{cursor:none;}
       },
       vertexShader: [
         'attribute float aProg;',
+        'attribute float aSide;',
         'varying float vProg;',
+        'varying float vSide;',
         'void main(){',
-        '  vProg = aProg;',
+        '  vProg = aProg; vSide = aSide;',
         '  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);',
         '}'
       ].join('\n'),
       fragmentShader: [
         'uniform vec3 uColor; uniform float uTime; uniform float uOpacity;',
-        'varying float vProg;',
+        'varying float vProg; varying float vSide;',
         'void main(){',
-        '  float pulse = sin(vProg * 6.0 - uTime * 5.0);',
-        '  pulse = pow(max(pulse, 0.0), 3.0);',
-        '  float a = (0.34 + pulse * 0.66) * uOpacity;',
-        '  vec3 c = mix(uColor * 0.7, vec3(1.0), pulse * 0.8);',
-        '  gl_FragColor = vec4(c, a);',
+        '  float core = exp(-abs(vSide) * abs(vSide) * 4.5);',          // 横向高斯核
+        '  float fl = 0.5 + 0.5 * sin(vProg * 6.0 - uTime * 3.2);',     // 沿线流动
+        '  float flow = 0.40 + 1.0 * fl * fl;',
+        '  float ends = min(1.0, min(vProg, 1.0 - vProg) * 10.0);',     // 两端淡出
+        '  float a = clamp(core * flow * ends * uOpacity, 0.0, 1.0);',
+        '  vec3 c = mix(uColor, vec3(1.0), core * 0.6);',
+        // 强度乘进颜色、alpha 给 1：加色混合只走 SrcAlpha=1 这条路，
+        // 不赌驱动的 alpha 混合实现（之前整条光纤就是在这里被乘没的）
+        '  gl_FragColor = vec4(c * a, 1.0);',
         '}'
       ].join('\n')
     });
-    linkObj = new THREE.LineSegments(linkGeo, linkMat);
+    linkObj = new THREE.Mesh(linkGeo, linkMat);
     linkObj.frustumCulled = false;
+    linkObj.renderOrder = 10;
     scene.add(linkObj);
     linkObj.visible = false;
   }
 
   function computeNeighbors() {
+    // 只留最近 12 个带距离的候选，真正连哪几个在 showLinks 里按
+    // 「屏幕距离够不够长」决定 —— 挨在一起的星连出来只有几十像素，
+    // 全糊在双方光晕里，看着就像没有线。
     sessions.forEach(function (s) {
-      const others = sessions.filter(function (o) { return o !== s; });
-      others.sort(function (a, b) {
-        return a.pos.distanceToSquared(s.pos) - b.pos.distanceToSquared(s.pos);
+      const arr = [];
+      for (let i = 0; i < sessions.length; i++) {
+        if (sessions[i] !== s) {
+          arr.push({ o: sessions[i], d2: s.pos.distanceToSquared(sessions[i].pos) });
+        }
+      }
+      arr.sort(function (a, b) { return a.d2 - b.d2; });
+      s.nearN = arr.slice(0, 12).map(function (a) {
+        return { o: a.o, d: Math.sqrt(a.d2) };
       });
-      s.near = others.slice(0, 3);
+      s.near = s.nearN.slice(0, 3).map(function (a) { return a.o; });
     });
   }
 
+  const _lv1 = new THREE.Vector3(), _lv2 = new THREE.Vector3(), _lv3 = new THREE.Vector3();
+
   function showLinks(s) {
     const arr = linkGeo.attributes.position.array;
-    const prg = linkGeo.attributes.aProg.array;
-    const camRight = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0);
-    const dir = new THREE.Vector3(), off = new THREE.Vector3();
+    _lv1.setFromMatrixColumn(camera.matrixWorld, 0);   // 相机右方向
+    const fovK = 2 * Math.tan(camera.fov * Math.PI / 360) / innerHeight;
+    const wppS = camera.position.distanceTo(s.pos) * fovK;   // 世界单位 / 像素
+    const minLen = 110 * wppS;                               // 至少 110 像素长才连
+    const picks = [];
+    for (let i = 0; i < s.nearN.length && picks.length < 3; i++) {
+      if (s.nearN[i].d >= minLen) picks.push(s.nearN[i]);
+    }
+    if (picks.length === 0) {
+      picks.push.apply(picks, s.nearN.slice(-3));             // 全挤在一起，就连最远的
+    } else if (picks.length < 3) {
+      const rest = s.nearN.filter(function (a) { return picks.indexOf(a) < 0; })
+        .sort(function (a, b) { return b.d - a.d; });
+      while (picks.length < 3 && rest.length) picks.push(rest.shift());
+    }
     let vi = 0;
-    s.near.forEach(function (o) {
-      dir.subVectors(o.pos, s.pos).normalize();
-      // 垂直于视线与连线方向的偏移，画面里才会呈现成有宽度的一束
-      off.crossVectors(dir, camRight).normalize();
-      for (let k = 0; k < LINK_STRANDS; k++) {
-        const t = (k - (LINK_STRANDS - 1) / 2) * 0.55;
-        arr[vi * 3] = s.pos.x + off.x * t;
-        arr[vi * 3 + 1] = s.pos.y + off.y * t;
-        arr[vi * 3 + 2] = s.pos.z + off.z * t;
-        prg[vi] = 0; vi++;
-        arr[vi * 3] = o.pos.x + off.x * t;
-        arr[vi * 3 + 1] = o.pos.y + off.y * t;
-        arr[vi * 3 + 2] = o.pos.z + off.z * t;
-        prg[vi] = 1; vi++;
+    picks.forEach(function (it) {
+      const o = it.o;
+      _lv2.subVectors(o.pos, s.pos);
+      const len = _lv2.length() || 1;
+      _lv2.multiplyScalar(1 / len);
+      // 两端各按自己到相机的距离换算像素宽度，推近拉远粗细都一致
+      const k0 = wppS;
+      const k1 = camera.position.distanceTo(o.pos) * fovK;
+      for (let i = 0; i < LINK_RIBBON; i++) {
+        const t = i / LINK_SEG;
+        const wpp = k0 + (k1 - k0) * t;
+        const half = wpp * 4.0 * (0.45 + 0.55 * Math.sin(Math.PI * t));
+        _lv3.copy(s.pos).addScaledVector(_lv2, len * t);
+        arr[vi * 3] = _lv3.x - _lv1.x * half;
+        arr[vi * 3 + 1] = _lv3.y - _lv1.y * half;
+        arr[vi * 3 + 2] = _lv3.z - _lv1.z * half;
+        vi++;
+        arr[vi * 3] = _lv3.x + _lv1.x * half;
+        arr[vi * 3 + 1] = _lv3.y + _lv1.y * half;
+        arr[vi * 3 + 2] = _lv3.z + _lv1.z * half;
+        vi++;
       }
     });
     linkGeo.attributes.position.needsUpdate = true;
-    linkGeo.attributes.aProg.needsUpdate = true;
+    linkGeo.setDrawRange(0, picks.length * LINK_SEG * 6);
+    linkPick = picks;
     linkObj.visible = true;
   }
+
 
   // ---------------- 引力冲击波：点星时在 XZ 平面炸开一圈 ----------------
   const shock = { mesh: null, t0: 0, dur: 900, active: false, maxScale: 30 };
@@ -2012,6 +2077,9 @@ canvas{cursor:none;}
 
   // ---------------- 每帧更新 ----------------
   function updateStars(dt) {
+    // 相机右/上方向：标签贴边时要把世界偏移转回本地（group 在自转）
+    _cR.setFromMatrixColumn(camera.matrixWorld, 0);
+    _cU.setFromMatrixColumn(camera.matrixWorld, 1);
     sessions.forEach(function (s, i) {
       const o = s.op;
 
@@ -2045,15 +2113,55 @@ canvas{cursor:none;}
       // 屏幕像素 -> 世界单位，用来把打架的标签往上顶
       const worldPerPx = (2 * d * Math.tan(camera.fov * Math.PI / 360)) / innerHeight;
       s.obj.liftCur = toward(s.obj.liftCur || 0, s.obj.liftT || 0, dt, 9);
-      s.obj.label.position.y = sc * 1.25 + s.obj.liftCur * worldPerPx;
+      clampLabel(s, sc, worldPerPx, dt);
     });
 
     if (linkObj && linkObj.visible) {
-      linkOpacity = toward(linkMat.uniforms.uOpacity.value, hovered ? 0.55 : 0, dt, 8);
+      // 相机在动，带状面片的宽度/朝向每帧重算（只有 3 条，开销可忽略）
+      if (hovered) showLinks(hovered);
+      linkOpacity = toward(linkMat.uniforms.uOpacity.value, hovered ? 0.8 : 0, dt, 8);
       linkMat.uniforms.uOpacity.value = linkOpacity;
       linkMat.uniforms.uTime.value = clock * 0.001;
       if (linkOpacity < 0.01 && !hovered) linkObj.visible = false;
     }
+  }
+
+  // ---------------- 标签贴边夹取 ----------------
+  // 标签是屏幕对齐的精灵，不会自己换行也不会被画布边缘裁掉，
+  // 所以靠近右边/底部时按投影后的像素位置把它推回安全区。
+  const _cR = new THREE.Vector3(), _cU = new THREE.Vector3(), _cv = new THREE.Vector3();
+  const LABEL_M = 14;             // 安全边距（像素）
+  const LABEL_MAX_SHIFT = 280;    // 最多推这么远，别让标签跑离自己的星
+
+  function clampLabel(s, sc, wpp, dt) {
+    const o = s.obj;
+    if (!o.label.visible) return;
+    _cv.copy(o.group.position).project(camera);
+    if (_cv.z > 1) return;
+    const sx = (_cv.x * 0.5 + 0.5) * innerWidth;
+    const sy = (-_cv.y * 0.5 + 0.5) * innerHeight;
+    const halfW = (sc * o.aspect * 0.5) / wpp;
+    const halfH = (sc * 0.5) / wpp;
+    const cy = sy - o.label.position.y / wpp;   // 标签中心在锚点上方
+    let dr = 0, du = 0;
+    const r = sx + halfW, l = sx - halfW;
+    if (r > innerWidth - LABEL_M) dr = innerWidth - LABEL_M - r;
+    else if (l < LABEL_M) dr = LABEL_M - l;
+    const b = cy + halfH, t = cy - halfH;
+    if (b > innerHeight - LABEL_M) du = b - (innerHeight - LABEL_M);   // 下方溢出 -> 上移
+    else if (t < LABEL_M) du = t - LABEL_M;                            // 上方溢出 -> 下移
+    dr = Math.max(-LABEL_MAX_SHIFT, Math.min(LABEL_MAX_SHIFT, dr));
+    du = Math.max(-LABEL_MAX_SHIFT * 0.5, Math.min(LABEL_MAX_SHIFT * 0.5, du));
+    o.dxCur = toward(o.dxCur || 0, dr, dt, 10);
+    o.dyCur = toward(o.dyCur || 0, du, dt, 10);
+    const wx = (_cR.x * o.dxCur + _cU.x * o.dyCur) * wpp;
+    const wy = (_cR.y * o.dxCur + _cU.y * o.dyCur) * wpp;
+    const wz = (_cR.z * o.dxCur + _cU.z * o.dyCur) * wpp;
+    // 世界偏移 -> group 本地（绕 Y 反向旋转，group 每帧都在转）
+    const th = o.group.rotation.y, ct = Math.cos(th), st = Math.sin(th);
+    o.label.position.x = wx * ct - wz * st;
+    o.label.position.z = wx * st + wz * ct;
+    o.label.position.y = sc * 1.25 + o.liftCur * wpp + wy;
   }
 
   // 标签防重叠：屏幕空间里简单堆叠，被压住的往上挪
@@ -2301,11 +2409,37 @@ canvas{cursor:none;}
       const arms = [Math.round(x0), Math.round(y0), Math.round(x1), Math.round(y1)];
       _v.copy(systemGroup.position).project(camera);
       const sunPx = [Math.round((_v.x * 0.5 + 0.5) * innerWidth), Math.round((-_v.y * 0.5 + 0.5) * innerHeight)];
+
+      // 标签贴边：量「不夹取」和「夹取后」两个溢出量（像素），验几何而不是靠眼睛
+      let rawBad = 0, rawMax = 0, fixBad = 0, fixMax = 0;
+      const wv = new THREE.Vector3();
+      sessions.forEach(function (s) {
+        const dd = camera.position.distanceTo(s.obj.group.position);
+        const sc = Math.max(2.0, Math.min(16, dd * 0.032));
+        const wpp = 2 * dd * Math.tan(camera.fov * Math.PI / 360) / innerHeight;
+        const hw = (sc * s.obj.aspect * 0.5) / wpp, hh = (sc * 0.5) / wpp;
+        s.obj.liftCur = 0; s.obj.liftT = 0; s.obj.dxCur = 0; s.obj.dyCur = 0;
+        s.obj.label.position.set(0, sc * 1.25, 0);
+        function ovf() {
+          s.obj.label.getWorldPosition(wv);
+          wv.project(camera);
+          const cx = (wv.x * 0.5 + 0.5) * innerWidth, cy2 = (-wv.y * 0.5 + 0.5) * innerHeight;
+          return Math.max(0, cx + hw - (innerWidth - 14), 14 - (cx - hw),
+                          0, cy2 + hh - (innerHeight - 14), 14 - (cy2 - hh));
+        }
+        let o = ovf();
+        if (o > 0.5) { rawBad++; rawMax = Math.max(rawMax, o); }
+        clampLabel(s, sc, wpp, 1);
+        o = ovf();
+        if (o > 0.5) { fixBad++; fixMax = Math.max(fixMax, o); }
+      });
+
       document.title = 'PROBE ' + JSON.stringify({
         n: n, Rg: Math.round(Rg), gScale: +gScale.toFixed(2), d: Math.round(orbit.radius),
         farNode: Math.round(far), nodesPx: nodes, armsPx: arms, W: innerWidth, H: innerHeight,
         baseShift: Math.round(orbit.baseShift), phi: +orbit.phi.toFixed(2),
-        sunPx: sunPx, freeCX: Math.round(freeCX), trace: trace
+        sunPx: sunPx, freeCX: Math.round(freeCX), trace: trace,
+        lblRaw: [rawBad, Math.round(rawMax)], lblFix: [fixBad, Math.round(fixMax)]
       });
     }
   }
@@ -2371,6 +2505,28 @@ canvas{cursor:none;}
       }
 
       document.getElementById('close').onclick = closePanel;
+
+      // 调试：锁定悬停，把光纤端点的屏幕坐标写进 title，供像素级验证
+      if (QS.get('links') === '1') {
+        setTimeout(function () {
+          hoverLock = sessions[Math.min(1, sessions.length - 1)];
+          setHover(hoverLock);
+          setTimeout(function () {
+            const pts = [], v = new THREE.Vector3();
+            camera.updateMatrixWorld(true);
+            linkPick.concat([{ o: hoverLock }]).forEach(function (it) {
+              v.copy(it.o.pos).project(camera);
+              pts.push([Math.round((v.x * 0.5 + 0.5) * innerWidth),
+                        Math.round((-v.y * 0.5 + 0.5) * innerHeight)]);
+            });
+            document.title = 'LINKS ' + JSON.stringify({
+              pts: pts, op: +linkMat.uniforms.uOpacity.value.toFixed(2),
+              vis: linkObj.visible, picks: linkPick.length,
+              dd: linkPick.map(function (it) { return +it.d.toFixed(1); })
+            });
+          }, 700);
+        }, 200);
+      }
 
       // 自检：模拟「选中会话 → 点右上角 ×」，并报告 × 位置上最顶层的元素是谁
       if (QS.get('selftest') === '1') {
