@@ -26,6 +26,14 @@ canvas{display:block;cursor:grab;opacity:0;transition:opacity 1.1s ease .12s;}
 body.ready canvas{opacity:1;}
 canvas:active{cursor:grabbing;}
 
+/* 背景图：叠在星野上层做氛围，screen 混合让暗部不糊，四角再压暗 */
+#bg{position:fixed;inset:0;z-index:2;pointer-events:none;opacity:0;
+  background-position:center;background-size:cover;background-repeat:no-repeat;
+  mix-blend-mode:screen;transition:opacity 1.4s ease;
+  -webkit-mask-image:radial-gradient(ellipse at 55% 45%,#000 42%,transparent 88%);
+  mask-image:radial-gradient(ellipse at 55% 45%,#000 42%,transparent 88%);}
+#bg.on{opacity:.40;}
+
 /* ---------- 开场：星际跃迁 ---------- */
 #boot{position:fixed;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;
   background:radial-gradient(circle at 50% 46%,#0b1830 0%,#04060d 58%,#000 100%);
@@ -167,6 +175,9 @@ canvas:active{cursor:grabbing;}
 </head>
 <body>
 
+<!-- 背景图图层：?bg=<url> 或同目录 bg.jpg，会覆盖在星野上做氛围底 -->
+<div id="bg" aria-hidden="true"></div>
+
 <!-- 开场：星际跃迁 -->
 <div id="boot">
   <div class="boot-ring"></div>
@@ -245,6 +256,7 @@ canvas:active{cursor:grabbing;}
   const RING_DR = 0.085;
   const GALAXY_R = 236;        // 旋臂外径，取景时也要框进去
   let galaxyPts = null;        // 旋臂点云，取景时按星团规模缩放
+  let dustPts = null;          // 弥漫星尘
   const TURN = 0.55;
 
   const QS = new URLSearchParams(location.search);
@@ -539,7 +551,7 @@ canvas:active{cursor:grabbing;}
     post.bright = new THREE.ShaderMaterial({
       uniforms: {
         tDiffuse: { value: null },
-        threshold: { value: 0.84 }
+        threshold: { value: 0.75 }
       },
       vertexShader: VERT,
       fragmentShader: [
@@ -578,7 +590,7 @@ canvas:active{cursor:grabbing;}
       uniforms: {
         tScene: { value: null },
         tBloom: { value: null },
-        strength: { value: 0.40 },
+        strength: { value: 0.42 },
         vig: { value: 0.34 }
       },
       vertexShader: VERT,
@@ -590,7 +602,8 @@ canvas:active{cursor:grabbing;}
         '  vec3 col = texture2D(tScene, vUv).rgb;',
         '  vec3 bloom = texture2D(tBloom, vUv).rgb;',
         '  col += bloom * strength;',
-        '  col = col / (1.0 + col * 0.16);',            // 柔和压高光，不糊
+        '  col = (col * (2.51 * col + 0.03)) / (col * (2.43 * col + 0.59) + 0.14);', // ACES 近似
+        '  col = pow(max(col, 0.0), vec3(0.4545));',      // 线性→sRGB，缺这步整屏会偏暗偏灰
         '  float d = length(vUv - 0.5);',
         '  col *= mix(1.0, 1.0 - vig, smoothstep(0.30, 0.86, d));',
         '  gl_FragColor = vec4(col, 1.0);',
@@ -657,13 +670,13 @@ canvas:active{cursor:grabbing;}
 
   function initScene() {
     scene = new THREE.Scene();
-    scene.fog = new THREE.FogExp2(0x04060d, 0.0011);
+    // 参考模板没有雾；雾会把远处星尘压暗、整片发灰，这里去掉
 
     camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.5, 4000);
     renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' });
     renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     renderer.setSize(innerWidth, innerHeight);
-    renderer.setClearColor(0x04060d, 1);
+    renderer.setClearColor(0x050209, 1);
     document.body.appendChild(renderer.domElement);
 
     raycaster = new THREE.Raycaster();
@@ -672,8 +685,9 @@ canvas:active{cursor:grabbing;}
     addStarfield();
     addGalaxy();
     addNebula();
-    addMeteors();
-    addSolarSystem();
+    // 流星条容易糊成硬边白块，太阳系光晕会糊标签——都改成默认关闭，需要时 ?meteor=1 / ?sun=1
+    if (QS.get('meteor') === '1') addMeteors();
+    if (QS.get('sun') === '1') addSolarSystem();
     initPost();
   }
 
@@ -705,59 +719,130 @@ canvas:active{cursor:grabbing;}
     scene.add(starfield);
   }
 
-  // 背景星系旋臂：与星团共用一条对数螺旋线
+  // 粒子柔光 shader：很慢的呼吸（不是闪烁）+ 近大远小，移植自参考模板
+  const P_VERT = [
+    'attribute float aSize; attribute float aPhase; attribute vec3 aColor;',
+    'uniform float uTime; uniform float uPix;',
+    'varying vec3 vColor; varying float vTw;',
+    'void main(){',
+    '  vColor=aColor;',
+    '  float br=0.9+0.1*sin(uTime*0.28+aPhase);',
+    '  vTw=br;',
+    '  vec4 mv=modelViewMatrix*vec4(position,1.0);',
+    '  gl_PointSize=aSize*uPix*br*(1.0/-mv.z);',
+    '  gl_Position=projectionMatrix*mv;',
+    '}'
+  ].join('\n');
+  const P_FRAG = [
+    'varying vec3 vColor; varying float vTw;',
+    'void main(){',
+    '  float d=length(gl_PointCoord-0.5);',
+    '  float a=smoothstep(0.5,0.0,d);',
+    '  a=pow(a,1.6)*vTw;',
+    '  if(a<0.01) discard;',
+    '  gl_FragColor=vec4(vColor,a);',
+    '}'
+  ].join('\n');
+  // 世界尺度比模板大一个量级，点必须画得比「等比」更大，
+  // 否则每个点只有 1px、叠不出连续光带，整片会退化成噪点
+  const PSIZE_K = 90;
+
+  function particleMat(sizeScale) {
+    const m = new THREE.ShaderMaterial({
+      uniforms: { uTime: { value: 0 }, uPix: { value: renderer.getPixelRatio() * sizeScale } },
+      vertexShader: P_VERT, fragmentShader: P_FRAG,
+      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending
+    });
+    m.userData.baseUxPix = m.uniforms.uPix.value;   // 取景缩放时同步缩点径
+    return m;
+  }
+
+  // 星系盘：核心偏粉、中段紫、外圈蓝，稀疏金色点缀；散射大一点让双臂糊成一条带
   function addGalaxy() {
-    const ARMS = 2, PER = 1600, R0 = 24, RMAX = GALAXY_R, TWIST = 1.18;
-    const N = ARMS * PER;
+    const N = 14000;
     const pos = new Float32Array(N * 3);
     const col = new Float32Array(N * 3);
-    const core = new THREE.Color(0xffd9a6);
-    const edge = new THREE.Color(0x6f8fd6);
-    const tmp = new THREE.Color();
+    const sz = new Float32Array(N);
+    const phs = new Float32Array(N);
+    const cIn = new THREE.Color(0xffdcf2);
+    const cMid = new THREE.Color(0xc891ff);
+    const cOut = new THREE.Color(0x8fb0ff);
+    const gold = new THREE.Color(0xffcf9a);
+    const scat = 0.42;
 
     for (let i = 0; i < N; i++) {
-      const arm = i % ARMS;
-      const t = Math.pow(rnd(), 0.65);
-      const r = R0 + t * (RMAX - R0);
-      const spread = (rnd() - 0.5) * (0.28 + t * 0.55);
-      const a = arm * (Math.PI * 2 / ARMS) + TWIST * Math.log(r / R0) + spread;
+      const r = Math.pow(rnd(), 1.7) * GALAXY_R;
+      const branch = (i % 2) / 2 * Math.PI * 2;
+      const spin = (r / GALAXY_R) * 5.75;
+      const sx = Math.pow(rnd(), 2.6) * (rnd() < 0.5 ? 1 : -1) * scat * (r + GALAXY_R * 0.08);
+      const sz2 = Math.pow(rnd(), 2.6) * (rnd() < 0.5 ? 1 : -1) * scat * (r + GALAXY_R * 0.08);
+      const sy = Math.pow(rnd(), 3.0) * (rnd() < 0.5 ? 1 : -1) * scat * 0.34 * (r + GALAXY_R * 0.06);
 
-      pos[i * 3] = Math.cos(a) * r;
-      pos[i * 3 + 1] = (rnd() - 0.5) * (5 - t * 3.4);
-      pos[i * 3 + 2] = Math.sin(a) * r;
+      pos[i * 3] = Math.cos(branch + spin) * r + sx;
+      pos[i * 3 + 1] = sy;
+      pos[i * 3 + 2] = Math.sin(branch + spin) * r + sz2;
 
-      tmp.copy(core).lerp(edge, Math.pow(t, 0.8));
-      const b = 0.42 + rnd() * 0.5;
-      col[i * 3] = tmp.r * b; col[i * 3 + 1] = tmp.g * b; col[i * 3 + 2] = tmp.b * b;
+      const tN = r / GALAXY_R;
+      let cr, cg, cb;
+      if (tN < 0.5) {
+        const k = tN / 0.5;
+        cr = cIn.r + (cMid.r - cIn.r) * k; cg = cIn.g + (cMid.g - cIn.g) * k; cb = cIn.b + (cMid.b - cIn.b) * k;
+      } else {
+        const k = (tN - 0.5) / 0.5;
+        cr = cMid.r + (cOut.r - cMid.r) * k; cg = cMid.g + (cOut.g - cMid.g) * k; cb = cMid.b + (cOut.b - cMid.b) * k;
+      }
+      if (rnd() < 0.06) { cr = gold.r; cg = gold.g; cb = gold.b; }
+      col[i * 3] = cr; col[i * 3 + 1] = cg; col[i * 3 + 2] = cb;
+      sz[i] = (1.4 + rnd() * 3.6) * PSIZE_K;
+      phs[i] = rnd() * 6.28;
     }
 
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    g.setAttribute('color', new THREE.BufferAttribute(col, 3));
-    const pts = new THREE.Points(g, new THREE.PointsMaterial({
-      size: 2.05, sizeAttenuation: true, vertexColors: true,
-      map: glowTexture(), transparent: true, opacity: 0.58,
-      depthWrite: false, blending: THREE.AdditiveBlending
-    }));
+    g.setAttribute('aColor', new THREE.BufferAttribute(col, 3));
+    g.setAttribute('aSize', new THREE.BufferAttribute(sz, 1));
+    g.setAttribute('aPhase', new THREE.BufferAttribute(phs, 1));
+    const pts = new THREE.Points(g, particleMat(1.3));
     pts.frustumCulled = false;
     scene.add(pts);
     galaxyPts = pts;
   }
 
+  // 弥漫星尘：铺满空间，主要作用是景深
   function addNebula() {
-    const tex = glowTexture();
-    const cols = [0x123a5e, 0x2a1d4d, 0x0e3f43];
-    for (let i = 0; i < 3; i++) {
-      const s = new THREE.Sprite(new THREE.SpriteMaterial({
-        map: tex, color: cols[i], transparent: true, opacity: 0.30,
-        blending: THREE.AdditiveBlending, depthWrite: false
-      }));
-      const a = (i / 3) * Math.PI * 2;
-      s.position.set(Math.cos(a) * 300, (rnd() - 0.5) * 190, Math.sin(a) * 300);
-      s.scale.setScalar(560 + rnd() * 260);
-      nebulas.push(s);
-      scene.add(s);
+    const N = 6400;
+    const pos = new Float32Array(N * 3);
+    const col = new Float32Array(N * 3);
+    const sz = new Float32Array(N);
+    const phs = new Float32Array(N);
+    const cols = [0xe8b8ff, 0x9fb8ff, 0xffd0ec, 0xc8a0f0, 0xffe0b0].map(function (h) {
+      return new THREE.Color(h);
+    });
+
+    for (let i = 0; i < N; i++) {
+      const r = Math.pow(rnd(), 1.1) * GALAXY_R * 1.7 + GALAXY_R * 0.1;
+      const th = rnd() * Math.PI * 2;
+      const y = (rnd() - 0.5) * GALAXY_R * 1.1;
+      pos[i * 3] = Math.cos(th) * r;
+      pos[i * 3 + 1] = y;
+      pos[i * 3 + 2] = Math.sin(th) * r;
+      const c = cols[Math.floor(rnd() * cols.length)];
+      col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b;
+      sz[i] = (0.5 + rnd() * 1.3) * PSIZE_K;
+      phs[i] = rnd() * 6.28;
     }
+
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    g.setAttribute('aColor', new THREE.BufferAttribute(col, 3));
+    g.setAttribute('aSize', new THREE.BufferAttribute(sz, 1));
+    g.setAttribute('aPhase', new THREE.BufferAttribute(phs, 1));
+    const m = particleMat(1);
+    m.uniforms.uPix.value *= 0.9;
+    const pts = new THREE.Points(g, m);
+    pts.frustumCulled = false;
+    scene.add(pts);
+    dustPts = pts;
   }
 
   function buildStars() {
@@ -1593,6 +1678,9 @@ canvas:active{cursor:grabbing;}
     for (let i = 0; i < nebulas.length; i++) {
       nebulas[i].material.opacity = 0.26 + Math.sin(clock * 0.0004 + i * 2) * 0.05;
     }
+    const tsec = clock * 0.001;
+    if (galaxyPts && galaxyPts.material.uniforms) galaxyPts.material.uniforms.uTime.value = tsec;
+    if (dustPts && dustPts.material.uniforms) dustPts.material.uniforms.uTime.value = tsec;
   }
 
   // ---------------- 渲染循环 ----------------
@@ -1664,8 +1752,16 @@ canvas:active{cursor:grabbing;}
     far = Math.max(far, 40);
 
     // 旋臂贴着星团走：星团小的时候别把星系拉成一大团灰雾，反过来也别缩得比星团还小
-    const gScale = Math.max(0.42, Math.min(1.15, far * 1.45 / GALAXY_R));
-    if (galaxyPts) galaxyPts.scale.setScalar(gScale);
+    const gScale = Math.max(0.5, Math.min(1.6, far * 2.0 / GALAXY_R));
+    // 点径不跟着缩，缩完就糊成一团灰雾；uPix 一起缩放才保持颗粒感
+    function applyScale(pts, s) {
+      if (!pts) return;
+      pts.scale.setScalar(s);
+      const u = pts.material && pts.material.uniforms;
+      if (u && pts.material.userData.baseUxPix) u.uPix.value = pts.material.userData.baseUxPix * s;
+    }
+    applyScale(galaxyPts, gScale);
+    applyScale(dustPts, gScale);
     const Rg = GALAXY_R * gScale;          // 旋臂外径（缩放后）
 
     const W = innerWidth, H = innerHeight;
@@ -1820,6 +1916,21 @@ canvas:active{cursor:grabbing;}
       initSearch();
 
       document.getElementById('close').onclick = closePanel;
+
+      // 背景图：?bg=<url> 优先，其次同目录 bg.jpg；单文件版可用 window.MEMORY_BG 内联
+      (function () {
+        const b = document.getElementById('bg');
+        if (!b) return;
+        function use(src) {
+          b.style.backgroundImage = 'url("' + src + '")';
+          b.classList.add('on');
+        }
+        const q = QS.get('bg') || window.MEMORY_BG;
+        if (q) { use(q); return; }
+        fetch('bg.jpg', { method: 'HEAD' }).then(function (r) {
+          if (r.ok) use('bg.jpg');
+        }).catch(function () {});
+      })();
 
       // 开局：先定视角，再自动取景
       orbit.tTheta = 0.9;
