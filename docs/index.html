@@ -60,11 +60,12 @@ canvas:active{cursor:grabbing;}
   text-shadow:0 0 12px rgba(79,216,255,.45);}
 
 /* ---------- 左侧会话列表 ---------- */
-.side{position:absolute;top:130px;left:26px;width:242px;max-height:calc(100% - 190px);
+.side{position:absolute;top:130px;left:26px;width:242px;max-height:calc(100% - 168px);
   overflow-y:auto;pointer-events:auto;padding:2px 4px 2px 0;
-  mask-image:linear-gradient(180deg,transparent,#000 12px,#000 calc(100% - 10px),transparent);}
+  mask-image:linear-gradient(180deg,transparent,#000 12px,#000 calc(100% - 26px),transparent);}
 .side::-webkit-scrollbar{width:4px;}
-.side::-webkit-scrollbar-thumb{background:rgba(120,180,255,.25);border-radius:2px;}
+.side::-webkit-scrollbar-thumb{background:rgba(120,180,255,.32);border-radius:2px;}
+.side::-webkit-scrollbar-track{background:transparent;}
 .side .hint{font-size:11px;color:#5f7793;margin:0 0 9px 2px;letter-spacing:1.4px;}
 
 .item{position:relative;display:flex;gap:9px;align-items:flex-start;padding:9px 11px;
@@ -242,6 +243,8 @@ canvas:active{cursor:grabbing;}
   const COL_AI = 0x4fd8ff;
   const RING_R0 = 3.0;
   const RING_DR = 0.085;
+  const GALAXY_R = 236;        // 旋臂外径，取景时也要框进去
+  let galaxyPts = null;        // 旋臂点云，取景时按星团规模缩放
   const TURN = 0.55;
 
   const QS = new URLSearchParams(location.search);
@@ -270,7 +273,8 @@ canvas:active{cursor:grabbing;}
   const orbit = {
     theta: 0.9, phi: 1.12, radius: 210,
     target: new THREE.Vector3(-26, 0, 0),
-    tTheta: 0.9, tPhi: 1.12
+    tTheta: 0.9, tPhi: 1.12,
+    baseShift: 0               // 侧栏常驻，视线中心左移，把星图推到空出来的那半边
   };
   let flight = null;          // 缓动飞行
   let panelShift = 0;         // 面板打开时把视线中心右移
@@ -703,7 +707,7 @@ canvas:active{cursor:grabbing;}
 
   // 背景星系旋臂：与星团共用一条对数螺旋线
   function addGalaxy() {
-    const ARMS = 2, PER = 1600, R0 = 24, RMAX = 236, TWIST = 1.18;
+    const ARMS = 2, PER = 1600, R0 = 24, RMAX = GALAXY_R, TWIST = 1.18;
     const N = ARMS * PER;
     const pos = new Float32Array(N * 3);
     const col = new Float32Array(N * 3);
@@ -731,12 +735,13 @@ canvas:active{cursor:grabbing;}
     g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     g.setAttribute('color', new THREE.BufferAttribute(col, 3));
     const pts = new THREE.Points(g, new THREE.PointsMaterial({
-      size: 1.55, sizeAttenuation: true, vertexColors: true,
-      map: glowTexture(), transparent: true, opacity: 0.42,
+      size: 2.05, sizeAttenuation: true, vertexColors: true,
+      map: glowTexture(), transparent: true, opacity: 0.58,
       depthWrite: false, blending: THREE.AdditiveBlending
     }));
     pts.frustumCulled = false;
     scene.add(pts);
+    galaxyPts = pts;
   }
 
   function addNebula() {
@@ -1043,14 +1048,14 @@ canvas:active{cursor:grabbing;}
     systemGroup.add(sunGroup);
 
     const haloOuter = new THREE.Sprite(new THREE.SpriteMaterial({
-      map: tex, color: 0xff6a1e, transparent: true, opacity: 0.16,
+      map: tex, color: 0xff6a1e, transparent: true, opacity: 0.06,
       blending: THREE.AdditiveBlending, depthWrite: false
     }));
     haloOuter.scale.setScalar(470);
     sunGroup.add(haloOuter);
 
     const haloMid = new THREE.Sprite(new THREE.SpriteMaterial({
-      map: tex, color: 0xffa949, transparent: true, opacity: 0.38,
+      map: tex, color: 0xffa949, transparent: true, opacity: 0.14,
       blending: THREE.AdditiveBlending, depthWrite: false
     }));
     haloMid.scale.setScalar(196);
@@ -1221,7 +1226,8 @@ canvas:active{cursor:grabbing;}
     camera.position.addScaledVector(_right, pointer.x * orbit.radius * 0.035);
     camera.position.y += pointer.y * orbit.radius * 0.022;
 
-    _look.copy(orbit.target).addScaledVector(_right, panelShift * orbit.radius * 0.30);
+    _look.copy(orbit.target)
+      .addScaledVector(_right, panelShift * orbit.radius * 0.42 + orbit.baseShift);
     camera.lookAt(_look);
   }
 
@@ -1556,17 +1562,19 @@ canvas:active{cursor:grabbing;}
       const p = _scr[i];
       const w = Math.max(64, p.s.obj.aspect * 26);
       let lift = 0, guard = 0;
-      while (guard++ < 8) {
+      while (guard++ < 10) {
         let hit = false;
         for (let j = 0; j < placed.length; j++) {
           const q = placed[j];
+          // 用 q 抬升后的实际位置比较，否则多级抬升会互相压住
           if (Math.abs(p.x - q.x) < (w + q.w) * 0.5 &&
-              Math.abs((p.y - lift) - q.y) < 30) { hit = true; break; }
+              Math.abs((p.y - lift) - (q.y - q.lift)) < 32) { hit = true; break; }
         }
         if (!hit) break;
         lift += 30;
       }
       p.w = w;
+      p.lift = lift;
       placed.push(p);
       p.s.obj.liftT = lift;
     }
@@ -1642,6 +1650,135 @@ canvas:active{cursor:grabbing;}
     }, 240 + Math.floor(ctx || 0));
   }
 
+  // 开局机位：旋臂按星团规模收放，再按「近侧外沿」反算距离，
+  // 数据是 5 个簇还是 30 个簇都能自己找到合适的远近，不会被侧栏挡住或一半挤出画面。
+  function frameAll() {
+    const n = sessions.length || 1;
+    const c = new THREE.Vector3();
+    let far = 0;
+    sessions.forEach(function (s) {
+      c.add(s.pos);
+      far = Math.max(far, s.pos.length());
+    });
+    c.divideScalar(n);
+    far = Math.max(far, 40);
+
+    // 旋臂贴着星团走：星团小的时候别把星系拉成一大团灰雾，反过来也别缩得比星团还小
+    const gScale = Math.max(0.42, Math.min(1.15, far * 1.45 / GALAXY_R));
+    if (galaxyPts) galaxyPts.scale.setScalar(gScale);
+    const Rg = GALAXY_R * gScale;          // 旋臂外径（缩放后）
+
+    const W = innerWidth, H = innerHeight;
+    const sideEl = document.getElementById('side');
+    let sideW = 0;
+    if (W > 820 && sideEl) {
+      const r = sideEl.getBoundingClientRect();
+      if (r.width > 0) sideW = r.width + 34;
+    }
+    const freeW = Math.max(220, W - sideW);
+
+    const vfov = camera.fov * Math.PI / 180;
+    const hfov = 2 * Math.atan(Math.tan(vfov / 2) * freeW / H);
+    const tanH = Math.tan(hfov / 2), tanV = Math.tan(vfov / 2);
+    // 透视修正：近侧外沿离相机约 d-0.28Rg（实测放大系数），先给个解析初值
+    const NEAR = 0.28 * Rg;
+    const dW = Rg / (0.90 * tanH) + NEAR;
+    const dH = (Rg * Math.cos(orbit.tPhi)) / (0.86 * tanV) + NEAR;
+    let d = Math.max(dW, dH, far * 2.2);
+
+    // 再做几轮数值拟合：投影到屏幕量真实包围盒，按比例调距离、按偏差挪视线。
+    // 强透视下解析解总会偏心，量像素才靠谱。
+    const freeCX = sideW + freeW / 2, freeCY = H / 2 + 18;   // 目标：侧栏右边那块空白的正中，略偏下
+    const allowW = freeW * 0.94, allowH = H * 0.92;
+    const _v = new THREE.Vector3();
+    const _rt = new THREE.Vector3();
+    const _up = new THREE.Vector3();
+    const _rim = [];
+    for (let a = 0; a < 24; a++) {
+      const th = a / 24 * Math.PI * 2;
+      _rim.push(new THREE.Vector3(Math.cos(th) * Rg, 0, Math.sin(th) * Rg));
+      _rim.push(new THREE.Vector3(Math.cos(th) * Rg * 0.5, 0, Math.sin(th) * Rg * 0.5));
+    }
+    const _box = { x0: 0, y0: 0, x1: 0, y1: 0 };
+    function measure() {
+      _box.x0 = _box.y0 = 1e9; _box.x1 = _box.y1 = -1e9;
+      camera.updateMatrixWorld(true);
+      for (let i = 0; i < _rim.length + sessions.length; i++) {
+        if (i < _rim.length) _v.copy(_rim[i]).add(c);
+        else _v.copy(sessions[i - _rim.length].pos);
+        _v.project(camera);
+        const sx = (_v.x * 0.5 + 0.5) * W, sy = (-_v.y * 0.5 + 0.5) * H;
+        if (sx < _box.x0) _box.x0 = sx; if (sx > _box.x1) _box.x1 = sx;
+        if (sy < _box.y0) _box.y0 = sy; if (sy > _box.y1) _box.y1 = sy;
+      }
+    }
+
+    orbit.target.copy(c);
+    const trace = [];
+    let used = Math.max(100, Math.min(1400, d));
+    for (let it = 0; it < 6; it++) {
+      used = Math.max(100, Math.min(1400, d));
+      orbit.radius = used;
+      // 侧栏让位（像素量为准，跟着距离缩放）也放进拟合里，否则量出来的框和最终画面对不上
+      orbit.baseShift = -sideW / 2 * (2 * tanV / H) * used;
+      updateCamera(0);
+      measure();
+      // 标签浮在星星上方，纵向多留 34px
+      const bw = _box.x1 - _box.x0, bh = _box.y1 - _box.y0 + 34;
+      const k = Math.max(bw / allowW, bh / allowH);
+      const cx = (_box.x0 + _box.x1) / 2, cy = (_box.y0 + _box.y1) / 2 + 17;
+      trace.push([Math.round(used), +k.toFixed(3), Math.round(bw), Math.round(bh), Math.round(cx), Math.round(cy)]);
+      const wpp = 2 * used * tanV / H;
+      _rt.setFromMatrixColumn(camera.matrixWorld, 0);
+      _up.setFromMatrixColumn(camera.matrixWorld, 1);
+      // 水平：视线右移 → 画面内容左移；垂直：视线下移 → 画面内容上移
+      orbit.target.addScaledVector(_rt, (cx - freeCX) * wpp);
+      orbit.target.addScaledVector(_up, -(cy - freeCY) * wpp);
+      if (Math.abs(k - 1) < 0.015) break;
+      d *= k;
+    }
+    orbit.radius = used;
+    orbit.baseShift = -sideW / 2 * (2 * tanV / H) * orbit.radius;
+    updateCamera(0);
+
+    // 太阳系：推到星盘后面很远的地方，只剩一层暖色底光，不参与构图
+    if (systemGroup && systemGroup.parent) {
+      systemGroup.scale.setScalar(0.32 * Math.max(0.8, gScale));
+      systemGroup.position.set(c.x - Rg * 0.55, c.y + Rg * 0.10, c.z - Rg * 3.0);
+    }
+
+    if (QS.has('probe')) {
+      let far2 = far;
+      camera.updateMatrixWorld(true);
+      updateCamera(0);
+      camera.updateMatrixWorld(true);
+      const v = new THREE.Vector3();
+      let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+      function acc(p) {
+        v.copy(p).project(camera);
+        const sx = (v.x * 0.5 + 0.5) * innerWidth, sy = (-v.y * 0.5 + 0.5) * innerHeight;
+        if (sx < x0) x0 = sx; if (sx > x1) x1 = sx;
+        if (sy < y0) y0 = sy; if (sy > y1) y1 = sy;
+      }
+      sessions.forEach(function (s) { acc(s.pos); });
+      const nodes = [Math.round(x0), Math.round(y0), Math.round(x1), Math.round(y1)];
+      x0 = y0 = 1e9; x1 = y1 = -1e9;
+      for (let a = 0; a < 16; a++) {
+        const th = a / 16 * Math.PI * 2;
+        acc(new THREE.Vector3(Math.cos(th) * Rg, 0, Math.sin(th) * Rg));
+      }
+      const arms = [Math.round(x0), Math.round(y0), Math.round(x1), Math.round(y1)];
+      _v.copy(systemGroup.position).project(camera);
+      const sunPx = [Math.round((_v.x * 0.5 + 0.5) * innerWidth), Math.round((-_v.y * 0.5 + 0.5) * innerHeight)];
+      document.title = 'PROBE ' + JSON.stringify({
+        n: n, Rg: Math.round(Rg), gScale: +gScale.toFixed(2), d: Math.round(orbit.radius),
+        farNode: Math.round(far), nodesPx: nodes, armsPx: arms, W: innerWidth, H: innerHeight,
+        baseShift: Math.round(orbit.baseShift), phi: +orbit.phi.toFixed(2),
+        sunPx: sunPx, freeCX: Math.round(freeCX), trace: trace
+      });
+    }
+  }
+
   function startIntro(animate) {
     if (!animate) return;
     const target = orbit.radius;
@@ -1684,18 +1821,12 @@ canvas:active{cursor:grabbing;}
 
       document.getElementById('close').onclick = closePanel;
 
-      // 开局：全景视角，把全部星辰框进画面
-      let far = 0;
-      sessions.forEach(function (s) {
-        const r = RING_R0 + s.msgCount * RING_DR;
-        far = Math.max(far, s.pos.length() + r);
-      });
-      orbit.radius = Math.max(140, far * 2.1);
-      orbit.target.set(-26, 0, 0);
+      // 开局：先定视角，再自动取景
       orbit.tTheta = 0.9;
-      orbit.tPhi = 1.12;
+      orbit.tPhi = 0.95;
       orbit.theta = 0.9;
-      orbit.phi = 1.12;
+      orbit.phi = 0.95;
+      frameAll();
 
       const fi = QS.get('focus');
       const focusS = fi !== null ? sessions[+fi] : null;
