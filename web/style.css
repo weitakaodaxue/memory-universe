@@ -214,3 +214,4 @@ canvas{cursor:none;}
   font-family:"JetBrains Mono",Consolas,monospace;font-size:12px;letter-spacing:.6px;
   color:#a8ecff;text-shadow:0 0 10px rgba(79,216,255,.55),0 1px 2px rgba(0,0,0,.8);opacity:0;transition:opacity .2s;}
 #reticle.lock .ret-coord{opacity:1;}
+#reticle.near-r .ret-coord{left:auto;right:44px;text-align:right;}

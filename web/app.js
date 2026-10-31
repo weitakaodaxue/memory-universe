@@ -558,7 +558,7 @@
     'varying vec3 vColor; varying float vTw;',
     'void main(){',
     '  float d=length(gl_PointCoord-0.5);',
-    '  float a=smoothstep(0.5,0.0,d);',
+    '  float a=1.0-smoothstep(0.0,0.5,d);',   // 反向 smoothstep 是 UB（edge0>=edge1），改成等价形式
     '  a=pow(a,1.6)*vTw;',
     '  if(a<0.01) discard;',
     '  gl_FragColor=vec4(vColor,a);',
@@ -949,7 +949,7 @@
         'varying vec2 vUv;',
         'void main(){',
         '  float d = length(vUv - 0.5) * 2.0;',
-        '  float ring = smoothstep(0.0, 0.45, d) * smoothstep(1.0, 0.62, d);',
+        '  float ring = smoothstep(0.0, 0.45, d) * (1.0 - smoothstep(0.62, 1.0, d));',  // 同上：等价曲线，不再用反向 edge
         '  float a = ring * (1.0 - uProgress) * 0.85;',
         '  if (a < 0.004) discard;',
         '  gl_FragColor = vec4(uColor, a);',
@@ -1537,6 +1537,8 @@
     window.addEventListener('pointermove', function (e) {
       reticle.el.style.transform = 'translate(' + e.clientX + 'px,' + e.clientY + 'px)';
       reticle.el.classList.add('on');
+      // 靠近右边缘时坐标读数翻到准星左边，否则会被画布切掉
+      reticle.el.classList.toggle('near-r', e.clientX > innerWidth - 210);
     }, { passive: true });
     document.addEventListener('pointerleave', function () {
       reticle.el.classList.remove('on');
