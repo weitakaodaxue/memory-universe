@@ -95,7 +95,9 @@
   }
 
   function labelTexture(text, color) {
-    const fs = 44, pad = 26;
+    // 字号比原来大、留白比原来小：同一个胶囊高度里字更大；
+    // 文字不再用彩色 shadowBlur（那是糊的主因），改成深色描边压背景
+    const fs = 56, pad = 22;
     const probe = document.createElement('canvas').getContext('2d');
     probe.font = '600 ' + fs + 'px "Microsoft YaHei",sans-serif';
     const tw = Math.ceil(probe.measureText(text).width);
@@ -113,10 +115,10 @@
     g.arcTo(w, c.height, w - r, c.height, r); g.lineTo(r, c.height);
     g.arcTo(0, c.height, 0, c.height - r, r); g.lineTo(0, r);
     g.arcTo(0, 0, r, 0, r); g.closePath();
-    g.fillStyle = 'rgba(4,9,18,.78)';
+    g.fillStyle = 'rgba(4,9,18,.82)';
     g.fill();
     g.strokeStyle = color;
-    g.globalAlpha = 0.55;
+    g.globalAlpha = 0.6;
     g.lineWidth = 2;
     g.stroke();
     g.globalAlpha = 1;
@@ -124,13 +126,19 @@
     g.font = '600 ' + fs + 'px "Microsoft YaHei",sans-serif';
     g.textAlign = 'center';
     g.textBaseline = 'middle';
-    g.fillStyle = '#eaf4ff';
-    g.shadowColor = color;
-    g.shadowBlur = 14;
+    g.lineJoin = 'round';
+    g.strokeStyle = 'rgba(2,5,11,.95)';
+    g.lineWidth = 7;
+    g.strokeText(text, w / 2, c.height / 2 + 1);
+    g.fillStyle = '#f6fbff';
     g.fillText(text, w / 2, c.height / 2 + 1);
 
     const tex = new THREE.CanvasTexture(c);
-    tex.minFilter = THREE.LinearFilter;
+    // 纹理比屏幕上显示的像素大好几倍，必须开 mipmap + 各向异性，否则缩小时必然发糊
+    tex.generateMipmaps = true;
+    tex.minFilter = THREE.LinearMipmapLinearFilter;
+    tex.magFilter = THREE.LinearFilter;
+    if (renderer && renderer.capabilities) tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
     return { tex: tex, aspect: c.width / c.height };
   }
 
