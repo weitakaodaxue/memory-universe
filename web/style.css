@@ -136,6 +136,23 @@ canvas:active{cursor:grabbing;}
   font-size:12px;color:#7d93ab;letter-spacing:.5px;white-space:nowrap;}
 .tips b{color:#a9c2dc;font-weight:600;}
 
+/* ---------- 细节 / 总体 开关 ---------- */
+.expand{position:absolute;right:26px;bottom:56px;pointer-events:auto;
+  padding:7px 13px;border-radius:9px;border:1px solid var(--line);
+  background:rgba(10,18,32,.85);color:#9fb6d0;font-size:12px;letter-spacing:.6px;
+  cursor:pointer;backdrop-filter:blur(8px);transition:color .3s,border-color .3s,background .3s;}
+.expand:hover{color:#dff0ff;border-color:rgba(120,190,255,.45);}
+.expand.on{color:#04121c;background:rgba(79,216,255,.86);border-color:transparent;}
+
+/* ---------- 消息小星的摘要气泡 ---------- */
+#mtip{position:fixed;top:0;left:0;z-index:950;pointer-events:none;
+  max-width:330px;padding:6px 10px;border-radius:8px;
+  background:rgba(8,14,26,.93);border:1px solid rgba(120,180,255,.26);
+  color:#cfe4ff;font-size:12px;line-height:1.45;letter-spacing:.2px;
+  box-shadow:0 6px 24px rgba(0,0,0,.45);backdrop-filter:blur(6px);
+  opacity:0;transition:opacity .18s;}
+#mtip.on{opacity:1;}
+
 /* ---------- 搜索 ---------- */
 .search{position:absolute;top:24px;right:26px;pointer-events:auto;display:flex;gap:8px;}
 .search input{width:214px;padding:8px 12px;border-radius:10px;border:1px solid var(--line);

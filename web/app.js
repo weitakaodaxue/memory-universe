@@ -16,11 +16,22 @@
   const COL_AI = 0x4fd8ff;
   const RING_R0 = 3.0;
   const RING_DR = 0.085;
+  // 细节星的螺旋半径按消息数自适应：8 条铺到 ~11，600 多条封在 ~53，
+  // 太小看不出螺旋，太大又会侵占隔壁会话的地盘。
+  function starRadius(n) {
+    return 9 + Math.min(54, 2.7 * Math.sqrt(n));
+  }
   const GALAXY_R = 236;        // 旋臂外径，取景时也要框进去
   let galaxyPts = null;        // 旋臂点云，取景时按星团规模缩放
   let dustPts = null;          // 弥漫星尘
   let frameDist = 0;           // 取景后的相机距离，LOD 用
   const TURN = 0.55;
+
+  // 细节星：每个会话的每条消息都是一颗小星，沿螺旋绕在母星周围。
+  // 默认折叠（收成一团微光），可以单独展开一个会话，也可以一键全展开。
+  const msgOpen = new Set();
+  let msgAll = false;
+  let hoverMsg = null;
 
   const QS = new URLSearchParams(location.search);
   function flag(k, dflt) {
@@ -736,7 +747,7 @@
 
       // 外圈（轨道示意）
       const seg = 96, arr = [];
-      const rr = RING_R0 + s.msgCount * RING_DR;
+      const rr = starRadius(s.msgCount) * 1.06;
       for (let i = 0; i <= seg; i++) {
         const a = (i / seg) * Math.PI * 2;
         arr.push(new THREE.Vector3(Math.cos(a) * rr, 0, Math.sin(a) * rr));
@@ -766,12 +777,22 @@
       const pos = new Float32Array(n * 3);
       const colr = new Float32Array(n * 3);
       const base = new THREE.Color();
+      const Rmax = starRadius(n);
+      // 圈数跟着消息数走：8 条画不出多圈，只会变成两层稀疏椭圆，
+      // 不如给一段彗尾似的弧；几百条封在 7 圈，再多就糊成一团。
+      // 每圈 ~12 条，保证圈与圈之间留得出空隙。
+      const turns = Math.min(7, Math.max(1.0, n / 12)) * Math.PI * 2;
+      // 竖向拉高成弹簧状：扁着看永远像「一圈椭圆」，
+      // 抬到接近直径才读得出这是一条往上爬的时间线。
+      const rise = Math.min(96, Rmax * 1.9);
+      const den = Math.max(1, n - 1);
       for (let i = 0; i < n; i++) {
         const m = s.messages[i];
-        const a = i * TURN;
-        const r = RING_R0 + i * RING_DR;
+        const t = i / den;
+        const a = t * turns;
+        const r = 7 + (Rmax - 7) * Math.pow(t, 0.85);
         pos[i * 3] = Math.cos(a) * r;
-        pos[i * 3 + 1] = Math.sin(i * 1.7) * 0.55 + (rnd() - 0.5) * 0.3;
+        pos[i * 3 + 1] = (t - 0.5) * rise + (rnd() - 0.5) * 0.3;
         pos[i * 3 + 2] = Math.sin(a) * r;
         base.setHex(m.role === 'user' ? COL_USER : COL_AI);
         colr[i * 3] = base.r; colr[i * 3 + 1] = base.g; colr[i * 3 + 2] = base.b;
@@ -780,7 +801,7 @@
       pg.setAttribute('position', new THREE.BufferAttribute(pos, 3));
       pg.setAttribute('color', new THREE.BufferAttribute(colr, 3));
       const pm = new THREE.PointsMaterial({
-        size: 1.5, sizeAttenuation: true, vertexColors: true,
+        size: 1.2, sizeAttenuation: true, vertexColors: true,
         map: glowTex, transparent: true, opacity: 0.95,
         depthWrite: false, blending: THREE.AdditiveBlending
       });
@@ -788,6 +809,33 @@
       points.userData = { kind: 'messages', id: s.id };
       group.add(points);
       messagePoints.push(points);
+
+      // 轨迹线：只有散点的话，多圈螺旋会缩成「一圈椭圆」；
+      // 补一条沿着同名参数曲线走的淡线，走向一眼可读。
+      const spN = 260, spArr = new Float32Array((spN + 1) * 3);
+      const spCol = new Float32Array((spN + 1) * 3);
+      for (let i = 0; i <= spN; i++) {
+        const t = i / spN;
+        const a = t * turns;
+        const r = 7 + (Rmax - 7) * Math.pow(t, 0.85);
+        spArr[i * 3] = Math.cos(a) * r;
+        spArr[i * 3 + 1] = (t - 0.5) * rise;
+        spArr[i * 3 + 2] = Math.sin(a) * r;
+        // 从母星那端暗起：越靠近「现在」越亮，读得出时间方向
+        const f = 0.20 + 0.80 * t;
+        spCol[i * 3] = color.r * f;
+        spCol[i * 3 + 1] = color.g * f;
+        spCol[i * 3 + 2] = color.b * f;
+      }
+      const spGeo = new THREE.BufferGeometry();
+      spGeo.setAttribute('position', new THREE.BufferAttribute(spArr.slice(0), 3));
+      spGeo.setAttribute('color', new THREE.BufferAttribute(spCol, 3));
+      const spiral = new THREE.Line(spGeo, new THREE.LineBasicMaterial({
+        vertexColors: true, transparent: true, opacity: 0,
+        depthWrite: false, blending: THREE.AdditiveBlending
+      }));
+      spiral.frustumCulled = false;
+      group.add(spiral);
 
       // 标签
       const lab = labelTexture(s.title, '#' + color.getHexString());
@@ -804,7 +852,9 @@
       s.obj = {
         group: group, glow: glow, core: core, points: points,
         label: ls, ring: ring, corona: corona, color: color, aspect: lab.aspect,
-        baseGlow: gs, scale: 1, liftCur: 0, liftT: 0
+        baseGlow: gs, scale: 1, liftCur: 0, liftT: 0,
+        msgBase: pos.slice(0), msgE: 0, msgT: 0,
+        spiral: spiral, spiralBase: spArr.slice(0)
       };
       // 透明度目标值，逐帧逼近 = 所有淡入淡出都平滑
       s.op = { glow: 0.85, points: 0.95, label: 0.92, ring: 0.16 };
@@ -1461,8 +1511,11 @@
     camera.position.addScaledVector(_right, pointer.x * orbit.radius * 0.035);
     camera.position.y += pointer.y * orbit.radius * 0.022;
 
+    // 侧栏让位必须跟着 orbit.radius 实时缩放：推近到几十单位时，按取景距离算死的
+    // 那个偏移会放大成好几个屏幕宽，把目标整个推出画面。
+    const bShift = (orbit.baseK || 0) * orbit.radius;
     _look.copy(orbit.target)
-      .addScaledVector(_right, panelShift * orbit.radius * 0.42 + orbit.baseShift);
+      .addScaledVector(_right, panelShift * orbit.radius * 0.24 + bShift);
     camera.lookAt(_look);
   }
 
@@ -1532,6 +1585,24 @@
         menuBtn.classList.toggle('on');
       };
     }
+
+    // 「细节 / 总体」开关：一键展开或收起所有会话的消息星
+    const expandBtn = document.getElementById('expand');
+    if (expandBtn) {
+      expandBtn.onclick = function () {
+        msgAll = !msgAll;
+        if (!msgAll) msgOpen.clear();
+        expandBtn.classList.toggle('on', msgAll);
+        expandBtn.textContent = msgAll ? '总体' : '细节';
+        sfx.blip();
+      };
+      // 截图 / 演示用：?msgs=1 开局就把细节星全展开
+      if (flag('msgs', false)) {
+        msgAll = true;
+        expandBtn.classList.add('on');
+        expandBtn.textContent = '总体';
+      }
+    }
   }
 
   function ndc(cx, cy) {
@@ -1541,7 +1612,12 @@
   function pick(cx, cy) {
     raycaster.setFromCamera(ndc(cx, cy), camera);
 
-    const pts = raycaster.intersectObjects(messagePoints, false);
+    // 只有展开状态下的细节星才参与拾取，折叠时它们挤在母星里，不该抢点击
+    const active = messagePoints.filter(function (p) {
+      const t = byId(p.userData.id);
+      return t && t.obj.msgE > 0.5;
+    });
+    const pts = active.length ? raycaster.intersectObjects(active, false) : [];
     if (pts.length && pts[0].index != null) {
       const s = byId(pts[0].object.userData.id);
       if (s) { selectSession(s, pts[0].index); return; }
@@ -1566,9 +1642,53 @@
     pointerPx.moved = false;
 
     raycaster.setFromCamera(ndc(pointerPx.x, pointerPx.y), camera);
+
+    // 细节星优先：鼠标压在哪颗小星上，就只报这条消息
+    const open = messagePoints.filter(function (p) {
+      const t = byId(p.userData.id);
+      return t && t.obj.msgE > 0.6;
+    });
+    if (open.length) {
+      const mp = raycaster.intersectObjects(open, false);
+      if (mp.length && mp[0].index != null) {
+        const t = byId(mp[0].object.userData.id);
+        if (t) {
+          setHoverMsg(t, mp[0].index);
+          setHover(null);
+          return;
+        }
+      }
+    }
+    setHoverMsg(null);
+
     const hits = raycaster.intersectObjects(hitSpheres, false);
     const s = hits.length ? byId(hits[0].object.userData.id) : null;
     setHover(s);
+  }
+
+  // 细节星的一行摘要，走 DOM 而不是 3D 精灵：不参与渲染管线，也不会抢背景
+  function setHoverMsg(s, i) {
+    const tip = document.getElementById('mtip');
+    if (!tip) return;
+    if (!s) {
+      if (hoverMsg) { hoverMsg = null; tip.classList.remove('on'); }
+      return;
+    }
+    if (hoverMsg && hoverMsg.s === s && hoverMsg.i === i) { positionTip(); return; }
+    const m = s.messages[i];
+    if (!m) return;
+    hoverMsg = { s: s, i: i };
+    const plain = (m.text || '').replace(/\s+/g, ' ').trim();
+    tip.textContent = (m.role === 'user' ? '你' : '助手') + ' · ' +
+      (plain.length > 46 ? plain.slice(0, 46) + '…' : plain);
+    tip.classList.add('on');
+    positionTip();
+  }
+
+  function positionTip() {
+    const tip = document.getElementById('mtip');
+    if (!tip || !hoverMsg) return;
+    tip.style.transform = 'translate(' + (pointerPx.x + 16) + 'px,' + (pointerPx.y + 20) + 'px)';
   }
 
   function setHover(s) {
@@ -1596,6 +1716,7 @@
       reticle.el.classList.add('on');
       // 靠近右边缘时坐标读数翻到准星左边，否则会被画布切掉
       reticle.el.classList.toggle('near-r', e.clientX > innerWidth - 210);
+      if (hoverMsg) positionTip();
     }, { passive: true });
     document.addEventListener('pointerleave', function () {
       reticle.el.classList.remove('on');
@@ -1620,6 +1741,8 @@
     document.getElementById('panel').classList.remove('open');
     selected = null;
     panelShiftT = 0;
+    msgOpen.clear();
+    setHoverMsg(null);
     refreshOpacity();
     document.querySelectorAll('.item').forEach(function (el) { el.classList.remove('on'); });
     let far = 0;
@@ -1641,11 +1764,13 @@
     renderMessages(s);
 
     // 缓动飞过去
-    const r = RING_R0 + s.msgCount * RING_DR;
-    flightTo(s.pos, Math.max(30, r * 2.6), 1.15, easeInOutCubic);
+    const r = starRadius(s.msgCount);
+    flightTo(s.pos, Math.max(42, r * 3.0), 1.15, easeInOutCubic);
     triggerShockwave(s.pos);
     sfx.warp();
     panelShiftT = 1;
+    // 选中即展开这个会话的消息星，面板里那条也能对得上
+    msgOpen.add(s.id);
 
     refreshOpacity();
 
@@ -1838,8 +1963,26 @@
     sessions.forEach(function (s, i) {
       const o = s.op;
 
+      // 细节星：展开进度平滑逼近目标，再把整团螺旋按进度缩放（折叠 = 收进母星）
+      s.obj.msgE = toward(s.obj.msgE, (msgAll || msgOpen.has(s.id)) ? 1 : 0, dt, 4.2);
+      const e = s.obj.msgE;
+      if (Math.abs(e - s.obj.msgT) > 0.0004) {
+        s.obj.msgT = e;
+        const k = 0.09 + 0.91 * e;
+        const arr = s.obj.points.geometry.attributes.position.array;
+        const b = s.obj.msgBase;
+        for (let q = 0; q < arr.length; q++) arr[q] = b[q] * k;
+        s.obj.points.geometry.attributes.position.needsUpdate = true;
+        s.obj.points.material.size = 1.5 + 2.2 * e;
+        const sArr = s.obj.spiral.geometry.attributes.position.array;
+        const sb = s.obj.spiralBase;
+        for (let q = 0; q < sArr.length; q++) sArr[q] = sb[q] * k;
+        s.obj.spiral.geometry.attributes.position.needsUpdate = true;
+      }
+      s.obj.spiral.material.opacity = toward(s.obj.spiral.material.opacity, 0.50 * e, dt, 7);
+
       s.obj.glow.material.opacity = toward(s.obj.glow.material.opacity, o.glow, dt, 7);
-      s.obj.points.material.opacity = toward(s.obj.points.material.opacity, o.points, dt, 7);
+      s.obj.points.material.opacity = toward(s.obj.points.material.opacity, o.points * (0.10 + 0.90 * e), dt, 7);
       s.obj.label.material.opacity = toward(s.obj.label.material.opacity, o.label, dt, 7);
       s.obj.ring.material.opacity = toward(s.obj.ring.material.opacity, o.ring, dt, 7);
 
@@ -1858,6 +2001,7 @@
       // 推近到能看清时才出现。阈值按相机距离，缩放是连续的，不会闪。
       const far = frameDist || 240;
       s.obj.points.visible = d < far * 1.15;
+      s.obj.spiral.visible = s.obj.points.visible;
       s.obj.ring.visible = d < far * 1.6;
       // 标签每人一张 canvas 纹理，上千个会话就是上千次 draw call：
       // 只在近处显示，远处的靠光晕和侧栏认人。
@@ -2112,6 +2256,8 @@
     }
 
     orbit.target.copy(c);
+    // 侧栏让位的「每单位距离偏移量」：只和视口宽度有关，乘当前 radius 才是世界偏移
+    orbit.baseK = -sideW / 2 * (2 * tanV / H);
     const trace = [];
     let used = Math.max(100, Math.min(1400, d));
     for (let it = 0; it < 6; it++) {
@@ -2359,6 +2505,10 @@
       const fi = QS.get('focus');
       const focusS = fi !== null ? sessions[+fi] : null;
 
+      // 截图路径（?warm=）下 performance.now() 不前进，飞行永远停在第一帧：
+      // 所以先在 warm 快进之前把视线 / 面板 / 细节星都设好，再让 step() 跑完这段缓动。
+      if (focusS && WARM > 0) selectSession(focusS, null);
+
       if (WARM > 0) {
         const steps = Math.min(3600, Math.round(WARM * 60));
         for (let k = 0; k < steps; k++) step(1 / 60);
@@ -2368,9 +2518,43 @@
       tick();
       bootDone(0);
 
-      if (focusS) {
-        // 等跃迁结束再飞过去
-        setTimeout(function () { selectSession(focusS, null); }, WARM > 0 ? 0 : 900);
+      // 细节星几何自检（?msgprobe=1）：把当前选中（否则最大）会话的螺旋投影到屏幕，
+      // 量它的竖横比。竖横比接近 1 才是立起来的弹簧，接近 0 就只是平摊的一圈椭圆。
+      if (QS.has('msgprobe')) {
+        const big = selected || sessions.reduce(function (a, b) { return b.msgCount > a.msgCount ? b : a; });
+        const v3 = new THREE.Vector3();
+        let mx0 = 1e9, mx1 = -1e9, my0 = 1e9, my1 = -1e9;
+        const spb = big.obj.spiralBase;
+        camera.updateMatrixWorld(true);
+        for (let i = 0; i < spb.length; i += 3) {
+          v3.set(spb[i], spb[i + 1], spb[i + 2]);
+          big.obj.group.localToWorld(v3);
+          v3.project(camera);
+          const sx = (v3.x * 0.5 + 0.5) * innerWidth, sy = (-v3.y * 0.5 + 0.5) * innerHeight;
+          if (sx < mx0) mx0 = sx; if (sx > mx1) mx1 = sx;
+          if (sy < my0) my0 = sy; if (sy > my1) my1 = sy;
+        }
+        function pt(k) {
+          const v = new THREE.Vector3(spb[k * 3], spb[k * 3 + 1], spb[k * 3 + 2]);
+          big.obj.group.localToWorld(v); v.project(camera);
+          return [Math.round((v.x * 0.5 + 0.5) * innerWidth), Math.round((-v.y * 0.5 + 0.5) * innerHeight)];
+        }
+        document.title = 'MSG ' + JSON.stringify({
+          n: big.msgCount, d: Math.round(orbit.radius), e: +big.obj.msgE.toFixed(2),
+          w: Math.round(mx1 - mx0), h: Math.round(my1 - my0),
+          a: pt(0), b: pt(spb.length / 3 - 1), W: innerWidth, H: innerHeight
+        });
+        // 截图里直接印出结果：headless 的 --dump-dom 在这台机器上拿不到 stdout
+        const pre = document.createElement('pre');
+        pre.style.cssText = 'position:fixed;left:0;top:0;z-index:9999;background:#000;color:#0f0;' +
+          'font:28px/1.5 monospace;padding:24px;margin:0';
+        pre.textContent = document.title.replace('MSG ', '');
+        document.body.appendChild(pre);
+      }
+
+      if (focusS && WARM <= 0) {
+        // 交互模式：等跃迁结束再飞过去
+        setTimeout(function () { selectSession(focusS, null); }, 900);
       }
     })
     .catch(function (e) {

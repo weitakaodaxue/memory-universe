@@ -59,9 +59,14 @@
     <div class="msgs" id="msgs"></div>
   </div>
 
+  <button class="expand" id="expand" aria-label="展开细节">细节</button>
+
   <div class="tips">
     <b>拖拽</b> 旋转 · <b>滚轮</b> 缩放 · <b>点击星辰</b> 查看对话
   </div>
+
+  <!-- 细节星的单行摘要：跟随指针，不进 3D 渲染管线 -->
+  <div id="mtip" aria-hidden="true"></div>
 
   <!-- 科幻准星：跟随指针，锁定星辰时收缩并显示赤经赤纬 -->
   <div id="reticle" aria-hidden="true">
