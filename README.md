@@ -99,6 +99,18 @@ python export_memory.py --max-text 800   # 每条只留 800 字
 
 只填 `title` / `createdAt` / `msgCount` / `messages` 也能跑。
 
+## 让记忆保持最新
+
+```bash
+python refresh.py             # 导出 -> 重新打包 -> 覆盖桌面那份
+python refresh.py --watch     # 常驻：会话一有变化就重做（默认 60 秒查一次）
+```
+
+单文件版是**快照**，不会自己更新。用 `python serve.py` 看的话更省事——页面每次加载都会
+重读 `memory.json`，刷新浏览器就是最新的，不需要这个脚本。
+
+想彻底不用管，把 `python refresh.py` 挂进 Windows 任务计划程序，每小时跑一次即可。
+
 ## 打成一个文件发给别人
 
 ```bash
@@ -162,6 +174,7 @@ python build_single.py --data web/memory.demo.json --out demo.html
 memory-universe/
 ├── export_memory.py          会话流水 -> memory.json（DSH 版导出器）
 ├── build_single.py           打包成单个 HTML
+├── refresh.py                一键刷新：导出 + 重打包 + 覆盖桌面（可 --watch 常驻）
 ├── serve.py                  本地起服务 + 打开浏览器
 ├── tools/make_demo_data.py   重建示例数据 web/memory.demo.json
 ├── tools/privacy_check.py    发布前扫描：绝对路径 / 密钥 / 邮箱 / 手机号
